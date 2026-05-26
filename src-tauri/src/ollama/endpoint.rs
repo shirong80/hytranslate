@@ -7,11 +7,15 @@ pub fn is_endpoint_allowed(url: &str) -> bool {
     let Ok(parsed) = reqwest::Url::parse(url) else {
         return false;
     };
-    matches!(parsed.scheme(), "http" | "https")
-        && matches!(
-            parsed.host_str(),
-            Some("localhost") | Some("127.0.0.1") | Some("::1") | Some("[::1]")
-        )
+    // Minor 3 — Ollama 기본은 http://localhost:11434. HTTPS loopback 은 v1 흐름이 아니므로
+    // 의도되지 않은 입력으로 본다. 외부 송신 차단 원칙 강화.
+    if parsed.scheme() != "http" {
+        return false;
+    }
+    matches!(
+        parsed.host_str(),
+        Some("localhost") | Some("127.0.0.1") | Some("::1") | Some("[::1]")
+    )
 }
 
 #[cfg(test)]
@@ -23,8 +27,14 @@ mod tests {
         assert!(is_endpoint_allowed("http://localhost:11434"));
         assert!(is_endpoint_allowed("http://127.0.0.1:11434"));
         assert!(is_endpoint_allowed("http://[::1]:11434"));
-        assert!(is_endpoint_allowed("https://localhost:443"));
         assert!(is_endpoint_allowed("http://localhost"));
+    }
+
+    /// Minor 3 회귀 — Ollama 는 plaintext http only. HTTPS loopback 도 거부한다.
+    #[test]
+    fn https_loopback_rejected() {
+        assert!(!is_endpoint_allowed("https://localhost:11434"));
+        assert!(!is_endpoint_allowed("https://127.0.0.1:11434"));
     }
 
     #[test]

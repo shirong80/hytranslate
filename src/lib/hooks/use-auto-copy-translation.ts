@@ -16,6 +16,7 @@ export function useAutoCopyTranslation(enabled: boolean): void {
   const status = useTranslationStore((s) => s.status);
   const output = useTranslationStore((s) => s.output);
   const requestId = useTranslationStore((s) => s.requestId);
+  const setCopyError = useTranslationStore((s) => s.setCopyError);
   const lastCopiedReqRef = useRef<string | null>(null);
 
   useEffect(() => {
@@ -26,8 +27,12 @@ export function useAutoCopyTranslation(enabled: boolean): void {
     const dedupKey = requestId ?? output;
     if (lastCopiedReqRef.current === dedupKey) return;
     lastCopiedReqRef.current = dedupKey;
-    void copyText(output).catch(() => {
-      // 실패는 UX 상 무시 — 사용자가 수동 복사 버튼으로 복구.
+    void copyText(output).catch((err) => {
+      // Minor 4 — store 에 copyError 를 기록해 UI 가 1.5초 inline 메시지를 띄울 수 있게.
+      setCopyError({
+        kind: 'CopyFailed',
+        message: err instanceof Error ? err.message : String(err),
+      });
     });
-  }, [enabled, status, output, requestId]);
+  }, [enabled, status, output, requestId, setCopyError]);
 }

@@ -1,7 +1,9 @@
-import { Check, Copy, Loader2, X } from 'lucide-react';
+import { currentMonitor, getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { Check, ClipboardPaste, Copy, Loader2, X } from 'lucide-react';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { usePasteFromClipboard } from '@features/clipboard/hooks';
 import { useSettingsStore } from '@features/settings/store';
 import { SourceLanguageSelect } from '@features/translation/components/source-language-select';
 import { useTranslationStore } from '@features/translation/store';
@@ -10,8 +12,9 @@ import { useTranslationController } from '@features/translation/use-translation-
 import { t } from '@i18n/ko';
 import { copyText } from '@lib/clipboard';
 import { useAutoCopyTranslation } from '@lib/hooks/use-auto-copy-translation';
-import { invoke } from '@lib/ipc/client';
+import { invoke, listen } from '@lib/ipc/client';
 import { messageFor } from '@lib/ipc/errors';
+import { POPUP_OPENED } from '@lib/ipc/events';
 import { applyTheme, type ThemeMode } from '@lib/theme';
 
 import '@styles/globals.css';
@@ -25,6 +28,7 @@ function PopupApp() {
 
   const sourceText = useTranslationStore((s) => s.sourceText);
   const sourceLanguage = useTranslationStore((s) => s.sourceLanguage);
+  const resolvedLanguage = useTranslationStore((s) => s.resolvedLanguage);
   const output = useTranslationStore((s) => s.output);
   const status = useTranslationStore((s) => s.status);
   const error = useTranslationStore((s) => s.error);
@@ -37,6 +41,7 @@ function PopupApp() {
   useAutoCopyTranslation(autoCopy);
 
   const [copied, setCopied] = useState(false);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -44,6 +49,65 @@ function PopupApp() {
     // 명시 — a11y 린트가 autoFocus 를 금지하지만 popup 의 UX 상 즉시 포커스 필수.
     textareaRef.current?.focus();
   }, []);
+
+  // Major 4 — 단축키로 다시 열릴 때마다 textarea focus 보장.
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let cancelled = false;
+    listen<void>(POPUP_OPENED, () => {
+      textareaRef.current?.focus();
+    }).then((unsub) => {
+      if (cancelled) unsub();
+      else off = unsub;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
+
+  const pasteFromClipboard = usePasteFromClipboard({
+    onText: (text) => setSourceText(text),
+    onError: (message) => setPasteError(message),
+  });
+  const handlePasteFromClipboard = useCallback(() => {
+    setPasteError(null);
+    void pasteFromClipboard();
+  }, [pasteFromClipboard]);
+
+  useEffect(() => {
+    if (!pasteError) return;
+    const timer = window.setTimeout(() => setPasteError(null), 2500);
+    return () => window.clearTimeout(timer);
+  }, [pasteError]);
+
+  // Major 4 — output 길이에 따라 popup 높이 조정. monitor 의 80% 를 cap.
+  // 480x360 이 기본; output 이 비면 360 으로 복귀.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    let cancelled = false;
+    const adjust = async () => {
+      try {
+        const monitor = await currentMonitor();
+        if (cancelled || !monitor) return;
+        const scale = monitor.scaleFactor;
+        const maxH = (monitor.size.height / scale) * 0.8;
+        const charsPerLine = 64;
+        const lineHeight = 18;
+        const lines = output ? Math.ceil(output.length / charsPerLine) : 0;
+        const base = 240;
+        const desired = base + Math.max(0, lines) * lineHeight;
+        const target = Math.min(Math.max(desired, 360), maxH);
+        await getCurrentWindow().setSize(new LogicalSize(480, target));
+      } catch {
+        // Tauri 외 환경에서 silent.
+      }
+    };
+    void adjust();
+    return () => {
+      cancelled = true;
+    };
+  }, [output]);
 
   useEffect(() => {
     void load();
@@ -61,15 +125,20 @@ function PopupApp() {
     invoke<void>('hide_popup').catch(() => undefined);
   }, []);
 
+  const setCopyError = useTranslationStore((s) => s.setCopyError);
   const handleCopy = useCallback(async () => {
     if (!output) return;
     try {
       await copyText(output);
       setCopied(true);
-    } catch {
-      // 실패 무시
+      setCopyError(null);
+    } catch (err) {
+      setCopyError({
+        kind: 'CopyFailed',
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, [output]);
+  }, [output, setCopyError]);
 
   useEffect(() => {
     if (!copied) return;
@@ -128,7 +197,11 @@ function PopupApp() {
       </header>
 
       <div className="flex items-center justify-between">
-        <SourceLanguageSelect value={sourceLanguage} onChange={setSourceLanguage} />
+        <SourceLanguageSelect
+          value={sourceLanguage}
+          onChange={setSourceLanguage}
+          resolvedLanguage={resolvedLanguage}
+        />
         <span
           className={
             overLimit
@@ -160,25 +233,44 @@ function PopupApp() {
             {t('popup.shortcuts.hint')}
           </span>
         )}
-        <button
-          type="button"
-          onClick={handleCopy}
-          disabled={!output}
-          className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white/70 px-2 py-0.5 text-[10px] text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:bg-neutral-800"
-        >
-          {copied ? (
-            <>
-              <Check className="size-3" aria-hidden />
-              {t('popup.action.copied')}
-            </>
-          ) : (
-            <>
-              <Copy className="size-3" aria-hidden />
-              {t('popup.action.copy')}
-            </>
-          )}
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            onClick={handlePasteFromClipboard}
+            className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white/70 px-2 py-0.5 text-[10px] text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            <ClipboardPaste className="size-3" aria-hidden />
+            {t('menubar.action.copyClipboard')}
+          </button>
+          <button
+            type="button"
+            onClick={handleCopy}
+            disabled={!output}
+            className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white/70 px-2 py-0.5 text-[10px] text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-neutral-700 dark:bg-neutral-900/70 dark:text-neutral-300 dark:hover:bg-neutral-800"
+          >
+            {copied ? (
+              <>
+                <Check className="size-3" aria-hidden />
+                {t('popup.action.copied')}
+              </>
+            ) : (
+              <>
+                <Copy className="size-3" aria-hidden />
+                {t('popup.action.copy')}
+              </>
+            )}
+          </button>
+        </div>
       </div>
+
+      {pasteError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          {pasteError}
+        </div>
+      ) : null}
 
       {error ? (
         <div

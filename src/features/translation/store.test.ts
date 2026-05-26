@@ -21,10 +21,11 @@ describe('translation store', () => {
     const { beginRequest, markStarted, appendChunk, markCompleted } =
       useTranslationStore.getState();
     beginRequest('req-1');
+    // idle 에서 beginRequest 호출하면 detecting 이 아니므로 translating 으로.
     expect(useTranslationStore.getState().status).toBe('translating');
     expect(useTranslationStore.getState().requestId).toBe('req-1');
 
-    markStarted({ requestId: 'req-1', startedAtMs: 1000 });
+    markStarted({ requestId: 'req-1', startedAtMs: 1000, resolvedLanguage: 'Korean' });
     appendChunk({ requestId: 'req-1', delta: 'Hello' });
     appendChunk({ requestId: 'req-1', delta: ', world!' });
     expect(useTranslationStore.getState().output).toBe('Hello, world!');
@@ -96,38 +97,47 @@ describe('translation store', () => {
     expect(state.output).toBe('');
   });
 
-  it('markCompleted records translation into recent[] (newest first)', () => {
+  it('setTyping / setDetecting transition through Major 8 states', () => {
     const store = useTranslationStore.getState();
-    store.setSourceText('첫번째');
-    store.beginRequest('req-1');
-    store.markCompleted({ requestId: 'req-1', fullText: 'first', durationMs: 100 });
-    store.setSourceText('두번째');
-    store.beginRequest('req-2');
-    store.markCompleted({ requestId: 'req-2', fullText: 'second', durationMs: 120 });
+    store.setTyping();
+    expect(useTranslationStore.getState().status).toBe('typing');
+    expect(useTranslationStore.getState().output).toBe('');
+    expect(useTranslationStore.getState().resolvedLanguage).toBeNull();
 
-    const recent = useTranslationStore.getState().recent;
-    expect(recent).toHaveLength(2);
-    expect(recent[0]?.requestId).toBe('req-2');
-    expect(recent[0]?.fullText).toBe('second');
-    expect(recent[1]?.requestId).toBe('req-1');
+    store.setDetecting();
+    expect(useTranslationStore.getState().status).toBe('detecting');
   });
 
-  it('recent[] is capped at RECENT_LIMIT', () => {
+  it('beginRequest preserves detecting transient (Medium 1)', () => {
     const store = useTranslationStore.getState();
-    for (let i = 0; i < 7; i++) {
-      store.beginRequest(`req-${i}`);
-      store.markCompleted({
-        requestId: `req-${i}`,
-        fullText: `translation-${i}`,
-        durationMs: 50,
-      });
-    }
-    const recent = useTranslationStore.getState().recent;
-    expect(recent).toHaveLength(5);
-    // 최신순 — 마지막에 들어간 req-6 이 첫 항목.
-    expect(recent[0]?.requestId).toBe('req-6');
-    // 가장 오래된 5번째 — req-2 (req-0, req-1 은 evict).
-    expect(recent[4]?.requestId).toBe('req-2');
+    store.setDetecting();
+    store.beginRequest('req-detect');
+    expect(useTranslationStore.getState().status).toBe('detecting');
+    // markStarted 가 도착하면 translating 으로.
+    store.markStarted({
+      requestId: 'req-detect',
+      startedAtMs: 1,
+      resolvedLanguage: 'Korean',
+    });
+    expect(useTranslationStore.getState().status).toBe('translating');
+  });
+
+  it('markStarted stores resolvedLanguage for the matching requestId', () => {
+    const store = useTranslationStore.getState();
+    store.beginRequest('req-Z');
+    store.markStarted({
+      requestId: 'req-Z',
+      startedAtMs: 100,
+      resolvedLanguage: 'ChineseSimplified',
+    });
+    expect(useTranslationStore.getState().resolvedLanguage).toBe('ChineseSimplified');
+    // 다른 requestId 는 무시.
+    store.markStarted({
+      requestId: 'stale',
+      startedAtMs: 999,
+      resolvedLanguage: 'Korean',
+    });
+    expect(useTranslationStore.getState().resolvedLanguage).toBe('ChineseSimplified');
   });
 
   it('setIdle returns store to idle and clears output/request/error', () => {

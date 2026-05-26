@@ -1,17 +1,24 @@
-import { readText } from '@tauri-apps/plugin-clipboard-manager';
 import { ClipboardPaste, Loader2 } from 'lucide-react';
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { usePasteFromClipboard } from '@features/clipboard/hooks';
+import { listTranslationRecords } from '@features/history/ipc';
+import type { TranslationRecord } from '@features/history/types';
 import { useSettingsStore } from '@features/settings/store';
 import { useTranslationStore } from '@features/translation/store';
 import { MENUBAR_INPUT_LIMIT } from '@features/translation/types';
 import { useTranslationController } from '@features/translation/use-translation-controller';
 import { t } from '@i18n/ko';
 import { useAutoCopyTranslation } from '@lib/hooks/use-auto-copy-translation';
+import { listen } from '@lib/ipc/client';
+import { messageFor } from '@lib/ipc/errors';
+import { MENUBAR_OPENED } from '@lib/ipc/events';
 import { applyTheme, type ThemeMode } from '@lib/theme';
 
 import '@styles/globals.css';
+
+const RECENT_LIMIT = 5;
 
 function MenubarApp() {
   const load = useSettingsStore((s) => s.load);
@@ -23,7 +30,6 @@ function MenubarApp() {
   const sourceText = useTranslationStore((s) => s.sourceText);
   const output = useTranslationStore((s) => s.output);
   const status = useTranslationStore((s) => s.status);
-  const recent = useTranslationStore((s) => s.recent);
 
   const setSourceText = useTranslationStore((s) => s.setSourceText);
   const setModel = useTranslationStore((s) => s.setModel);
@@ -31,10 +37,23 @@ function MenubarApp() {
   useTranslationController({ inputLimit: MENUBAR_INPUT_LIMIT });
   useAutoCopyTranslation(autoCopy);
 
+  const [recent, setRecent] = useState<TranslationRecord[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
+
+  const refreshRecent = useCallback(async () => {
+    try {
+      const result = await listTranslationRecords({ limit: RECENT_LIMIT });
+      setRecent(result.records);
+    } catch {
+      // 자동 게이트 회복: DB unavailable 환경이면 빈 리스트 유지.
+      setRecent([]);
+    }
+  }, []);
+
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
-    // 메뉴바 popover 가 열릴 때 자동 포커스. autoFocus prop 대신 ref 로 명시.
+    // 메뉴바 popover 가 열릴 때 자동 포커스.
     textareaRef.current?.focus();
   }, []);
 
@@ -50,17 +69,36 @@ function MenubarApp() {
     if (loaded) setModel(activeModel);
   }, [loaded, activeModel, setModel]);
 
-  const handlePasteFromClipboard = useCallback(async () => {
-    try {
-      const text = await readText();
-      if (text) setSourceText(text);
-    } catch {
-      // Tauri 외 환경에서는 무시.
-    }
-  }, [setSourceText]);
+  // 최초 로드 + popover 재오픈 시 매번 재조회.
+  useEffect(() => {
+    void refreshRecent();
+    let off: (() => void) | undefined;
+    let cancelled = false;
+    listen<void>(MENUBAR_OPENED, () => {
+      void refreshRecent();
+    }).then((unsub) => {
+      if (cancelled) unsub();
+      else off = unsub;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, [refreshRecent]);
+
+  const pasteFromClipboard = usePasteFromClipboard({
+    onText: (text) => setSourceText(text),
+    onError: (message) => setPasteError(message),
+  });
+  const handlePasteFromClipboard = useCallback(() => {
+    setPasteError(null);
+    void pasteFromClipboard();
+  }, [pasteFromClipboard]);
 
   const charCount = [...sourceText].length;
   const overLimit = charCount > MENUBAR_INPUT_LIMIT;
+
+  const errorBanner = useTranslationStore((s) => s.error);
 
   return (
     <main className="flex h-screen flex-col gap-2 bg-white/95 p-3 text-neutral-900 backdrop-blur-2xl dark:bg-neutral-950/95 dark:text-neutral-100">
@@ -78,6 +116,15 @@ function MenubarApp() {
           {t('translation.input.charCount', { count: charCount, limit: MENUBAR_INPUT_LIMIT })}
         </span>
       </header>
+
+      {pasteError ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          {pasteError}
+        </div>
+      ) : null}
 
       <textarea
         ref={textareaRef}
@@ -105,17 +152,26 @@ function MenubarApp() {
         ) : null}
       </div>
 
-      <div
-        role="status"
-        aria-live="polite"
-        className="min-h-16 max-h-32 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50/80 p-2 text-xs leading-relaxed text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-100"
-      >
-        {output || (
-          <span className="text-neutral-400 dark:text-neutral-600">
-            {t('translation.output.placeholder')}
-          </span>
-        )}
-      </div>
+      {errorBanner ? (
+        <div
+          role="alert"
+          className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-[10px] text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+        >
+          {messageFor(errorBanner)}
+        </div>
+      ) : (
+        <div
+          role="status"
+          aria-live="polite"
+          className="max-h-32 min-h-16 overflow-auto whitespace-pre-wrap rounded-md border border-neutral-200 bg-neutral-50/80 p-2 text-xs leading-relaxed text-neutral-900 dark:border-neutral-800 dark:bg-neutral-900/60 dark:text-neutral-100"
+        >
+          {output || (
+            <span className="text-neutral-400 dark:text-neutral-600">
+              {t('translation.output.placeholder')}
+            </span>
+          )}
+        </div>
+      )}
 
       <section className="flex flex-col gap-1">
         <h2 className="text-[10px] font-medium uppercase tracking-wider text-neutral-500 dark:text-neutral-500">
@@ -129,14 +185,14 @@ function MenubarApp() {
           <ul className="flex flex-col gap-1 overflow-auto">
             {recent.map((r) => (
               <li
-                key={r.requestId}
+                key={r.id}
                 className="rounded-md border border-neutral-200 bg-white/60 px-2 py-1 dark:border-neutral-800 dark:bg-neutral-900/50"
               >
                 <p className="line-clamp-1 text-[10px] text-neutral-500 dark:text-neutral-500">
                   {r.sourceText}
                 </p>
                 <p className="line-clamp-1 text-xs text-neutral-800 dark:text-neutral-200">
-                  {r.fullText}
+                  {r.translatedText}
                 </p>
               </li>
             ))}

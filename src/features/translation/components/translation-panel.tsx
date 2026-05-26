@@ -19,6 +19,7 @@ interface TranslationPanelProps {
 export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationPanelProps = {}) {
   const sourceText = useTranslationStore((s) => s.sourceText);
   const sourceLanguage = useTranslationStore((s) => s.sourceLanguage);
+  const resolvedLanguage = useTranslationStore((s) => s.resolvedLanguage);
   const output = useTranslationStore((s) => s.output);
   const status = useTranslationStore((s) => s.status);
   const error = useTranslationStore((s) => s.error);
@@ -27,6 +28,8 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
 
   const setSourceText = useTranslationStore((s) => s.setSourceText);
   const setSourceLanguage = useTranslationStore((s) => s.setSourceLanguage);
+  const copyError = useTranslationStore((s) => s.copyError);
+  const setCopyError = useTranslationStore((s) => s.setCopyError);
 
   const { runImmediately } = useTranslationController();
   const [copied, setCopied] = useState(false);
@@ -49,16 +52,26 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
     try {
       await navigator.clipboard.writeText(output);
       setCopied(true);
-    } catch {
-      // 클립보드 접근 실패는 v1 에서 inline 알림 없이 침묵 처리
+      setCopyError(null);
+    } catch (err) {
+      setCopyError({
+        kind: 'CopyFailed',
+        message: err instanceof Error ? err.message : String(err),
+      });
     }
-  }, [output]);
+  }, [output, setCopyError]);
 
   useEffect(() => {
     if (!copied) return;
     const timer = window.setTimeout(() => setCopied(false), 1500);
     return () => window.clearTimeout(timer);
   }, [copied]);
+
+  useEffect(() => {
+    if (!copyError) return;
+    const timer = window.setTimeout(() => setCopyError(null), 1500);
+    return () => window.clearTimeout(timer);
+  }, [copyError, setCopyError]);
 
   const handleOpenOllamaDownload = useCallback(() => {
     invoke<void>('open_ollama_download_page').catch(() => {
@@ -102,7 +115,11 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
       <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">
         <section className="flex flex-col gap-2">
           <div className="flex items-center justify-between">
-            <SourceLanguageSelect value={sourceLanguage} onChange={setSourceLanguage} />
+            <SourceLanguageSelect
+              value={sourceLanguage}
+              onChange={setSourceLanguage}
+              resolvedLanguage={resolvedLanguage}
+            />
             <CharCount count={charCount} limit={MAIN_INPUT_LIMIT} overLimit={overLimit} />
           </div>
           <textarea
@@ -148,6 +165,14 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
               </button>
             </div>
           </div>
+          {copyError ? (
+            <div
+              role="alert"
+              className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+            >
+              {t('errors.CopyFailed')}
+            </div>
+          ) : null}
           {error ? (
             <InlineError
               error={error}

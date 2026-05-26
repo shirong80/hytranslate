@@ -90,6 +90,12 @@ export function HistoryPanel({ onBack }: HistoryPanelProps = {}) {
           </span>
         </div>
         <div className="flex items-center gap-2">
+          <span
+            className="text-[10px] text-neutral-500 dark:text-neutral-500"
+            title={t('history.export.notice')}
+          >
+            {t('history.export.notice')}
+          </span>
           <button
             type="button"
             onClick={() => void exportCsv()}

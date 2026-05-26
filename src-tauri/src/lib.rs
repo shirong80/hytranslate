@@ -7,6 +7,7 @@ pub mod history;
 pub mod language;
 pub mod menubar;
 pub mod ollama;
+pub mod paths;
 pub mod settings;
 pub mod shortcuts;
 

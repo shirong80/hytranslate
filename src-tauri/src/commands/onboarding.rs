@@ -167,21 +167,28 @@ pub async fn get_ollama_status(
 ) -> AppResult<OllamaStatus> {
     let endpoint = settings.get().ollama_endpoint;
     let installed = detect_ollama_installed();
-    match client.list_models(&endpoint).await {
-        Ok(models) => Ok(OllamaStatus {
+    let status = match client.list_models(&endpoint).await {
+        Ok(models) => OllamaStatus {
             installed: true,
             running: true,
             endpoint,
             models,
-        }),
-        Err(AppError::OllamaNotRunning) => Ok(OllamaStatus {
+        },
+        Err(AppError::OllamaNotRunning) => OllamaStatus {
             installed,
             running: false,
             endpoint,
             models: Vec::new(),
-        }),
-        Err(err) => Err(err),
+        },
+        Err(err) => return Err(err),
+    };
+    // Major 6 — /api/tags 가 200 으로 응답한 경우에만 last_checked_at 을 touch.
+    // throttle: 5분. 메모리는 매번 갱신되고, disk 는 5분 단위 flush.
+    if status.running {
+        let now = chrono::Utc::now();
+        settings.maybe_touch_last_checked(now.to_rfc3339(), now.timestamp());
     }
+    Ok(status)
 }
 
 /// PRD §8.4 — Ollama 가 실행되지 않은 경우 자동 실행을 시도한다. 실패 시 사용자에게 직접

@@ -561,6 +561,11 @@ Output only the translation. Do not add explanations, preambles, quotation marks
 | recommended | INTEGER | 현재 하드웨어 기준 추천 여부 |
 | last_checked_at | TEXT | 마지막 확인 시각 |
 
+> v1 노트 (2026-05-26 code review v1 follow-up §10):
+> v1 에서는 `ollama_name` / `installed` / `recommended` 를 `/api/tags` 런타임 응답으로 대신하고,
+> `last_checked_at` 만 `settings.modelInstallState` 에 영속화한다. throttle: 5분. DB schema
+> 자체는 추가하지 않으며 v1.1 에서 본 표가 필요해지면 재논의.
+
 ### 9.4 SQLite 요구사항
 
 - DB 위치: `~/Library/Application Support/HyTranslate Mac/hytranslate.sqlite`

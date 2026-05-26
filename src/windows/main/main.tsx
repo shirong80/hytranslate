@@ -8,11 +8,13 @@ import { useSettingsStore } from '@features/settings/store';
 import { TranslationPanel } from '@features/translation/components/translation-panel';
 import { useTranslationStore } from '@features/translation/store';
 import { useAutoCopyTranslation } from '@lib/hooks/use-auto-copy-translation';
+import { listen } from '@lib/ipc/client';
+import { NAV_REQUEST, type NavRequestPayload, type NavRoute } from '@lib/ipc/events';
 import { applyTheme, type ThemeMode } from '@lib/theme';
 
 import '@styles/globals.css';
 
-type Route = 'translate' | 'history' | 'settings';
+type Route = NavRoute;
 
 function App() {
   const [route, setRoute] = useState<Route>('translate');
@@ -40,6 +42,21 @@ function App() {
   useEffect(() => {
     if (loaded) setModel(activeModel);
   }, [loaded, activeModel, setModel]);
+
+  useEffect(() => {
+    let off: (() => void) | undefined;
+    let cancelled = false;
+    listen<NavRequestPayload>(NAV_REQUEST, (payload) => {
+      setRoute(payload.route);
+    }).then((unsub) => {
+      if (cancelled) unsub();
+      else off = unsub;
+    });
+    return () => {
+      cancelled = true;
+      off?.();
+    };
+  }, []);
 
   // 초기 settings 가 도착하기 전에는 화면을 비워둔다 — onboarding flicker 방지.
   if (!loaded) {

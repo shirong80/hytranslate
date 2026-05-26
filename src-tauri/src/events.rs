@@ -15,3 +15,6 @@ pub const POPUP_OPENED: &str = "popup:opened";
 pub const POPUP_CLOSED: &str = "popup:closed";
 pub const MENUBAR_OPENED: &str = "menubar:opened";
 pub const MENUBAR_CLOSED: &str = "menubar:closed";
+
+/// Tray menu 가 main 윈도우로 nav 전환을 요청. payload: `{ route: "translate" | "history" | "settings" }`.
+pub const NAV_REQUEST: &str = "nav:request";

@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 
+import { withExponentialBackoff, type CancellationSignal } from '@lib/backoff';
 import { isAppError, type AppError } from '@lib/ipc/errors';
 
 import {
@@ -35,6 +36,7 @@ export interface OnboardingState {
   installedSinceStart: string[];
   loading: boolean;
   error: AppError | null;
+  startProbeSignal: CancellationSignal | null;
 }
 
 export interface OnboardingActions {
@@ -44,6 +46,7 @@ export interface OnboardingActions {
   loadEnvironment: () => Promise<void>;
   refreshOllamaStatus: () => Promise<void>;
   tryStartOllama: () => Promise<void>;
+  cancelStartProbe: () => void;
   selectModel: (model: string) => void;
   startPull: (model: string) => Promise<void>;
   cancelPull: () => Promise<void>;
@@ -63,6 +66,7 @@ const initialState: OnboardingState = {
   installedSinceStart: [],
   loading: false,
   error: null,
+  startProbeSignal: null,
 };
 
 export const useOnboardingStore = create<OnboardingState & OnboardingActions>()((set, get) => ({
@@ -108,21 +112,38 @@ export const useOnboardingStore = create<OnboardingState & OnboardingActions>()(
   },
 
   tryStartOllama: async () => {
-    set({ loading: true, error: null });
+    // 기존 probe 가 진행 중이면 취소하고 새로 시작.
+    get().cancelStartProbe();
+    const signal: CancellationSignal = { cancelled: false };
+    set({ loading: true, error: null, startProbeSignal: signal });
     try {
       await tryStartOllamaIpc();
     } catch (err) {
-      set({ error: toAppError(err), loading: false });
+      set({ error: toAppError(err), loading: false, startProbeSignal: null });
       return;
     }
-    // Ollama 가 데몬을 띄우기까지 잠시 시간이 필요. 짧은 backoff 후 status 재조회.
-    await new Promise((resolve) => setTimeout(resolve, 800));
+    // Major 5 — 단일 800ms sleep 을 exponential backoff 으로 교체.
+    // 250 → 500 → 1000 → 2000 → 4000 → 8000ms 총 ~15.75s, 빠르면 즉시 종료.
     try {
-      const ollama = await getOllamaStatus();
-      set({ ollama, loading: false });
+      const ollama = await withExponentialBackoff(
+        () => getOllamaStatus(),
+        (s) => s.running,
+        signal,
+      );
+      if (signal.cancelled) {
+        set({ loading: false, startProbeSignal: null });
+        return;
+      }
+      set({ ollama, loading: false, startProbeSignal: null });
     } catch (err) {
-      set({ error: toAppError(err), loading: false });
+      set({ error: toAppError(err), loading: false, startProbeSignal: null });
     }
+  },
+
+  cancelStartProbe: () => {
+    const sig = get().startProbeSignal;
+    if (sig) sig.cancelled = true;
+    set({ startProbeSignal: null });
   },
 
   selectModel: (model) => set({ selectedModel: model, error: null }),

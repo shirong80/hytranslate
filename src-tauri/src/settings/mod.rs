@@ -25,6 +25,17 @@ pub struct Settings {
     pub ollama_endpoint: String,
     pub theme: Theme,
     pub onboarding_completed: bool,
+    /// PRD §9.3 — v1 에서는 런타임 상태(`/api/tags`)로 ollama_name/installed/recommended 를
+    /// 대신하고, `last_checked_at` 만 영속한다. throttle: 5분.
+    #[serde(default)]
+    pub model_install_state: ModelInstallSummary,
+}
+
+/// `last_checked_at` 만 영속. 추가 필드는 v1.1+ 에서 결정.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelInstallSummary {
+    pub last_checked_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -46,6 +57,7 @@ impl Default for Settings {
             ollama_endpoint: "http://localhost:11434".to_string(),
             theme: Theme::System,
             onboarding_completed: false,
+            model_install_state: ModelInstallSummary::default(),
         }
     }
 }

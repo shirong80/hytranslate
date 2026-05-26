@@ -3,6 +3,10 @@
 export const THEMES = ['System', 'Light', 'Dark'] as const;
 export type Theme = (typeof THEMES)[number];
 
+export interface ModelInstallSummary {
+  lastCheckedAt: string | null;
+}
+
 export interface Settings {
   globalHotkey: string;
   activeModel: string;
@@ -13,6 +17,7 @@ export interface Settings {
   ollamaEndpoint: string;
   theme: Theme;
   onboardingCompleted: boolean;
+  modelInstallState: ModelInstallSummary;
 }
 
 // PRD §9.2 기본값. 백엔드 `Settings::default()` 와 1:1 동기화.
@@ -27,4 +32,5 @@ export const DEFAULT_SETTINGS: Settings = {
   ollamaEndpoint: 'http://localhost:11434',
   theme: 'System',
   onboardingCompleted: false,
+  modelInstallState: { lastCheckedAt: null },
 };

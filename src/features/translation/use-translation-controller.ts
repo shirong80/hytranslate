@@ -35,11 +35,13 @@ export function useTranslationController(options: UseTranslationControllerOption
   const markError = useTranslationStore((s) => s.markError);
   const setLocalError = useTranslationStore((s) => s.setLocalError);
   const setIdle = useTranslationStore((s) => s.setIdle);
+  const setTyping = useTranslationStore((s) => s.setTyping);
+  const setDetecting = useTranslationStore((s) => s.setDetecting);
 
   const debounceTimer = useRef<number | null>(null);
   const inFlightRef = useRef<string | null>(null);
 
-  /** in-flight 요청이 있으면 백엔드 취소를 보내고 ref 를 비운다. */
+  /** in-flight 요청이 있으면 백엔드 취소를 보내고 ref 를 비운다. backend cancel 은 idempotent. */
   const cancelInFlight = useCallback(async () => {
     const previousId = inFlightRef.current;
     if (!previousId) return;
@@ -99,7 +101,15 @@ export function useTranslationController(options: UseTranslationControllerOption
       return;
     }
 
+    // retranslateImmediately() 경로 (Cmd+Enter / 다시 번역) — 입력 deps 가 그대로일 때도
+    // 기존 in-flight 가 새 요청과 병행되지 않도록 방어선 유지.
     await cancelInFlight();
+
+    // Auto 입력에서만 detecting transient. 수동 선택이면 backend 가 detect 자체를
+    // 건너뛰므로 "언어 감지 중…" 을 잠깐 보여줄 이유가 없다.
+    if (useTranslationStore.getState().sourceLanguage === 'Auto') {
+      setDetecting();
+    }
 
     const newId = generateRequestId();
     inFlightRef.current = newId;
@@ -123,30 +133,52 @@ export function useTranslationController(options: UseTranslationControllerOption
       }
       if (inFlightRef.current === newId) inFlightRef.current = null;
     }
-  }, [beginRequest, cancelInFlight, inputLimit, markError, setIdle, setLocalError]);
+  }, [beginRequest, cancelInFlight, inputLimit, markError, setDetecting, setIdle, setLocalError]);
 
   useEffect(() => {
     if (debounceTimer.current) {
       window.clearTimeout(debounceTimer.current);
       debounceTimer.current = null;
     }
-    if (sourceText.trim().length === 0) {
-      void cancelInFlight().then(() => setIdle());
-      return;
-    }
-    debounceTimer.current = window.setTimeout(() => {
-      runTranslation().catch(() => {
-        // 이미 markError로 매핑됨
-      });
-    }, debounceMs);
+    // code-review v1 follow-up §15 — effect-local cancelled flag.
+    // 입력이 빠르게 바뀌면 이전 effect 의 `cancelInFlight().then(...)` continuation 이
+    // cleanup 이후 늦게 실행돼 stale timer 를 다시 예약할 수 있다. flag 로 그 continuation
+    // 을 차단해 마지막 effect 만 timer 를 예약하도록 한다.
+    let cancelled = false;
+
+    // Critical 2 — 입력 / 언어 / 모델 변경 즉시 in-flight 취소.
+    // stale 결과가 새 입력에 덮어쓰이거나 DB 에 저장되는 race 를 차단한다.
+    void cancelInFlight().then(() => {
+      if (cancelled) return;
+      if (sourceText.trim().length === 0) {
+        setIdle();
+        return;
+      }
+      setTyping();
+      debounceTimer.current = window.setTimeout(() => {
+        runTranslation().catch(() => {
+          // 이미 markError로 매핑됨
+        });
+      }, debounceMs);
+    });
 
     return () => {
+      cancelled = true;
       if (debounceTimer.current) {
         window.clearTimeout(debounceTimer.current);
         debounceTimer.current = null;
       }
     };
-  }, [sourceText, sourceLanguage, model, debounceMs, runTranslation, cancelInFlight, setIdle]);
+  }, [
+    sourceText,
+    sourceLanguage,
+    model,
+    debounceMs,
+    runTranslation,
+    cancelInFlight,
+    setIdle,
+    setTyping,
+  ]);
 
   const retranslateImmediately = useCallback(() => {
     if (debounceTimer.current) {

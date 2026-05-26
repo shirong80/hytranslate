@@ -12,12 +12,14 @@ use crate::db;
 use crate::errors::{AppError, AppResult};
 use crate::history::HistoryRepo;
 use crate::ollama::OllamaClient;
+use crate::paths as paths_mod;
 use crate::settings::SettingsStore;
 use crate::{menubar, shortcuts};
 
 pub mod detect;
 pub mod history;
 pub mod onboarding;
+pub mod paths;
 pub mod popup;
 pub mod settings;
 pub mod system;
@@ -64,14 +66,31 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         .manage(registry)
         .manage(pull_registry)
         .setup(|app| {
-            // Settings 영속화 위치: app_data_dir/settings.json
-            // macOS 에서는 ~/Library/Application Support/<bundle id>/settings.json 으로 매핑.
-            let data_dir =
-                app.path()
-                    .app_data_dir()
-                    .map_err(|e| -> Box<dyn std::error::Error> {
-                        Box::new(std::io::Error::other(format!("resolve app_data_dir: {e}")))
-                    })?;
+            // Major 7 — PRD §9.4 경로로 자동 마이그레이션. legacy 는 손대지 않음.
+            // 자동 단계: new 경로에 copy + verify. verify 실패 시 outcome.verified=false 로
+            // resolve_data_dir 이 legacy 를 fallback 으로 고른다.
+            let outcome = paths_mod::migrate_copy_verify(app.handle()).map_err(
+                |e| -> Box<dyn std::error::Error> {
+                    Box::new(std::io::Error::other(format!(
+                        "data dir initialization failed: {e:?}"
+                    )))
+                },
+            )?;
+            tracing::info!(
+                verified = outcome.verified,
+                legacy_cleanable = outcome.legacy_cleanable,
+                copied = outcome.copied.len(),
+                verify_error = ?outcome.verify_error,
+                "migration outcome",
+            );
+            let data_dir = paths_mod::resolve_data_dir(&outcome);
+            let outcome_state: paths::MigrationOutcomeState =
+                Arc::new(std::sync::RwLock::new(outcome));
+            app.manage(outcome_state);
+            let cleanup_tokens: paths::CleanupTokenState =
+                Arc::new(paths::CleanupTokenStore::default());
+            app.manage(cleanup_tokens);
+
             let settings_path = data_dir.join("settings.json");
             let store =
                 SettingsStore::load(&settings_path).map_err(|e| -> Box<dyn std::error::Error> {
@@ -141,5 +160,9 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             onboarding::pull_model,
             onboarding::cancel_model_pull,
             onboarding::complete_onboarding,
+            paths::get_legacy_migration_status,
+            paths::cleanup_confirmation_phrase,
+            paths::issue_cleanup_token,
+            paths::cleanup_legacy_data_dir,
         ])
 }

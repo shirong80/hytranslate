@@ -4,7 +4,7 @@
 //! - `hide_popup`: 윈도우 숨김. focus 추적 없이 항상 idempotent.
 //! - `toggle_popup`: 이미 보이면 숨기고, 아니면 show_popup.
 
-use tauri::{Emitter, LogicalPosition, Manager, Runtime, WebviewWindow};
+use tauri::{Emitter, LogicalPosition, Manager, PhysicalPosition, Runtime, WebviewWindow};
 
 use crate::errors::{AppError, AppResult};
 use crate::events::{POPUP_CLOSED, POPUP_OPENED};
@@ -16,10 +16,29 @@ pub fn get_popup<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<WebviewWind
         .ok_or_else(|| AppError::internal("popup window missing"))
 }
 
-fn center_on_primary<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
-    // Tauri 의 `center()` 가 단순하면서 디스플레이 안전. 활성 화면 추적 필요 시
-    // monitor_from_point 로 교체 — Phase 3 에서는 단순화한다.
-    window.center().map_err(AppError::internal)?;
+/// Major 4 — 마우스 커서가 있는 monitor 중심에 popup 을 배치. 둘 이상의 디스플레이가
+/// 있을 때 사용자가 보던 화면이 활성 monitor 로 우선시된다. cursor 추출에 실패하면
+/// primary 의 중심으로 fallback.
+fn place_on_active_monitor<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
+    let monitor = window
+        .cursor_position()
+        .ok()
+        .and_then(|pos| window.monitor_from_point(pos.x, pos.y).ok().flatten())
+        .or_else(|| window.primary_monitor().ok().flatten());
+    let Some(monitor) = monitor else {
+        // monitor API 자체가 실패 — Tauri 기본 center 로 fallback.
+        return window.center().map_err(AppError::internal);
+    };
+    // monitor 의 좌표는 이미 physical px — scale_factor 를 곱하지 않는다.
+    let mon_pos = monitor.position();
+    let mon_size = monitor.size();
+
+    let outer = window.outer_size().map_err(AppError::internal)?;
+    let cx = mon_pos.x as f64 + (mon_size.width as f64 - outer.width as f64) / 2.0;
+    let cy = mon_pos.y as f64 + (mon_size.height as f64 - outer.height as f64) / 2.0;
+    window
+        .set_position(PhysicalPosition::new(cx, cy))
+        .map_err(AppError::internal)?;
     Ok(())
 }
 
@@ -29,9 +48,10 @@ pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
         // 이미 보이는 경우 포커스만 가져온다 — 사용자가 다른 앱에서 단축키를
         // 두 번 누른 상황.
         window.set_focus().map_err(AppError::internal)?;
+        let _ = app.emit(POPUP_OPENED, ());
         return Ok(());
     }
-    center_on_primary(&window)?;
+    place_on_active_monitor(&window)?;
     window.show().map_err(AppError::internal)?;
     window.set_focus().map_err(AppError::internal)?;
     let _ = app.emit(POPUP_OPENED, ());
@@ -87,6 +107,22 @@ pub fn center_within(
     )
 }
 
+/// Major 4 — `place_on_active_monitor` 의 좌표 산출만 분리해 단위 테스트.
+/// monitor 의 좌상단 좌표 + 크기 → popup 좌상단 좌표.
+#[allow(dead_code)]
+pub fn center_on_monitor(
+    mon_x: f64,
+    mon_y: f64,
+    mon_w: f64,
+    mon_h: f64,
+    popup_w: f64,
+    popup_h: f64,
+) -> (f64, f64) {
+    let x = mon_x + (mon_w - popup_w) / 2.0;
+    let y = mon_y + (mon_h - popup_h) / 2.0;
+    (x, y)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -103,5 +139,14 @@ mod tests {
         let pos = center_within(300.0, 200.0, 480.0, 360.0);
         assert_eq!(pos.x, 0.0);
         assert_eq!(pos.y, 0.0);
+    }
+
+    /// Major 4 — secondary monitor 의 origin offset 이 반영돼야 한다.
+    #[test]
+    fn center_on_monitor_respects_origin_offset() {
+        // 1440x900 primary 우측에 1920x1080 sub-monitor 가 붙은 케이스.
+        let (x, y) = center_on_monitor(1440.0, 0.0, 1920.0, 1080.0, 480.0, 360.0);
+        assert_eq!(x, 1440.0 + (1920.0 - 480.0) / 2.0);
+        assert_eq!(y, (1080.0 - 360.0) / 2.0);
     }
 }

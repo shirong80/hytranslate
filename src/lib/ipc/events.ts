@@ -14,6 +14,13 @@ export const POPUP_CLOSED = 'popup:closed' as const;
 export const MENUBAR_OPENED = 'menubar:opened' as const;
 export const MENUBAR_CLOSED = 'menubar:closed' as const;
 
+export const NAV_REQUEST = 'nav:request' as const;
+
+export type NavRoute = 'translate' | 'history' | 'settings';
+export interface NavRequestPayload {
+  route: NavRoute;
+}
+
 export type TranslationEvent =
   | typeof TRANSLATION_STARTED
   | typeof TRANSLATION_CHUNK
@@ -31,6 +38,7 @@ export type SurfaceEvent =
   | typeof POPUP_OPENED
   | typeof POPUP_CLOSED
   | typeof MENUBAR_OPENED
-  | typeof MENUBAR_CLOSED;
+  | typeof MENUBAR_CLOSED
+  | typeof NAV_REQUEST;
 
 export type EventName = TranslationEvent | ModelPullEvent | SurfaceEvent;

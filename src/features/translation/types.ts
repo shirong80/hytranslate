@@ -9,7 +9,8 @@ export type SourceLanguage = (typeof SOURCE_LANGUAGES)[number];
 
 export type TranslationStatus =
   | 'idle'
-  | 'debouncing'
+  | 'typing'
+  | 'detecting'
   | 'translating'
   | 'completed'
   | 'cancelled'
@@ -20,17 +21,6 @@ export const POPUP_INPUT_LIMIT = 5_000;
 export const MENUBAR_INPUT_LIMIT = 5_000;
 
 export const DEFAULT_MODEL = 'hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M';
-
-export interface RecentTranslation {
-  requestId: string;
-  sourceText: string;
-  fullText: string;
-  sourceLanguage: SourceLanguage;
-  durationMs: number;
-  completedAtMs: number;
-}
-
-export const RECENT_LIMIT = 5;
 
 export interface TranslateRequest {
   sourceText: string;
@@ -43,6 +33,7 @@ export interface StartedPayload {
   requestId: string;
   model: string;
   startedAtMs: number;
+  resolvedLanguage: SourceLanguage;
 }
 
 export interface ChunkPayload {

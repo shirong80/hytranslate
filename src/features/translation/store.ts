@@ -2,13 +2,7 @@ import { create } from 'zustand';
 
 import type { AppError } from '@lib/ipc/errors';
 
-import {
-  type RecentTranslation,
-  type SourceLanguage,
-  type TranslationStatus,
-  DEFAULT_MODEL,
-  RECENT_LIMIT,
-} from './types';
+import { type SourceLanguage, type TranslationStatus, DEFAULT_MODEL } from './types';
 
 export interface TranslationState {
   sourceText: string;
@@ -20,8 +14,10 @@ export interface TranslationState {
   requestId: string | null;
   startedAtMs: number | null;
   durationMs: number | null;
-  /** in-memory recent translations; Phase 4 에서 SQLite + FTS5 로 대체된다. */
-  recent: RecentTranslation[];
+  /** Auto 입력의 backend 감지 결과. 수동 선택이면 null. */
+  resolvedLanguage: SourceLanguage | null;
+  /** 결과 복사 실패. 1.5초 후 자동 소멸 — UI 가 setTimeout 으로 해제한다. */
+  copyError: AppError | null;
 }
 
 export interface TranslationActions {
@@ -29,8 +25,16 @@ export interface TranslationActions {
   setSourceLanguage: (lang: SourceLanguage) => void;
   /** Settings 가 활성 모델을 푸시할 때 호출. translation store 가 settings 를 import 하지 않도록 외부 주입 패턴. */
   setModel: (model: string) => void;
+  /** 입력 변화가 감지되어 debounce 대기 중. */
+  setTyping: () => void;
+  /** runTranslation 직전 짧게 표시 — Auto 입력에서 backend 감지가 끝나기까지의 transient. */
+  setDetecting: () => void;
   beginRequest: (requestId: string) => void;
-  markStarted: (payload: { requestId: string; startedAtMs: number }) => void;
+  markStarted: (payload: {
+    requestId: string;
+    startedAtMs: number;
+    resolvedLanguage: SourceLanguage;
+  }) => void;
   appendChunk: (payload: { requestId: string; delta: string }) => void;
   markCompleted: (payload: { requestId: string; fullText: string; durationMs: number }) => void;
   markCancelled: (payload: { requestId: string }) => void;
@@ -41,6 +45,7 @@ export interface TranslationActions {
    * action 이므로 requestId 매칭 검사를 거치지 않는다.
    */
   setLocalError: (error: AppError) => void;
+  setCopyError: (error: AppError | null) => void;
   clearOutput: () => void;
   setIdle: () => void;
   reset: () => void;
@@ -56,7 +61,8 @@ const initialState: TranslationState = {
   requestId: null,
   startedAtMs: null,
   durationMs: null,
-  recent: [],
+  resolvedLanguage: null,
+  copyError: null,
 };
 
 export const useTranslationStore = create<TranslationState & TranslationActions>()((set, get) => ({
@@ -67,27 +73,45 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
   },
 
   setSourceLanguage: (lang) => {
-    set({ sourceLanguage: lang });
+    set({ sourceLanguage: lang, resolvedLanguage: null });
   },
 
   setModel: (model) => {
     set({ model });
   },
 
-  beginRequest: (requestId) => {
+  setTyping: () => {
     set({
+      status: 'typing',
+      error: null,
+      output: '',
+      durationMs: null,
+      startedAtMs: null,
+      resolvedLanguage: null,
+    });
+  },
+
+  setDetecting: () => {
+    set({ status: 'detecting', error: null });
+  },
+
+  beginRequest: (requestId) => {
+    set((s) => ({
       requestId,
-      status: 'translating',
+      // code-review v1 follow-up §20 — Auto 입력의 transient `detecting` 을 보존한다.
+      // `markStarted` 이벤트가 도착하면 그때 `translating` 으로 전환된다.
+      status: s.status === 'detecting' ? 'detecting' : 'translating',
       output: '',
       error: null,
       startedAtMs: null,
       durationMs: null,
-    });
+      resolvedLanguage: null,
+    }));
   },
 
-  markStarted: ({ requestId, startedAtMs }) => {
+  markStarted: ({ requestId, startedAtMs, resolvedLanguage }) => {
     if (get().requestId !== requestId) return;
-    set({ startedAtMs, status: 'translating' });
+    set({ startedAtMs, status: 'translating', resolvedLanguage });
   },
 
   appendChunk: ({ requestId, delta }) => {
@@ -97,26 +121,11 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
 
   markCompleted: ({ requestId, fullText, durationMs }) => {
     if (get().requestId !== requestId) return;
-    const { sourceText, sourceLanguage, recent } = get();
-    const entry: RecentTranslation = {
-      requestId,
-      sourceText,
-      fullText,
-      sourceLanguage,
-      durationMs,
-      completedAtMs: Date.now(),
-    };
-    // 새 항목이 가장 앞. RECENT_LIMIT 개 까지만 유지.
-    const nextRecent = [entry, ...recent.filter((r) => r.requestId !== requestId)].slice(
-      0,
-      RECENT_LIMIT,
-    );
     set({
       output: fullText,
       durationMs,
       status: 'completed',
       error: null,
-      recent: nextRecent,
     });
   },
 
@@ -138,7 +147,12 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
       output: '',
       durationMs: null,
       startedAtMs: null,
+      resolvedLanguage: null,
     });
+  },
+
+  setCopyError: (error) => {
+    set({ copyError: error });
   },
 
   clearOutput: () => {
@@ -153,6 +167,7 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
       output: '',
       startedAtMs: null,
       durationMs: null,
+      resolvedLanguage: null,
     });
   },
 

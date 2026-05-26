@@ -1,0 +1,11 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "clipboard-read",
+  "description": "paste UI 가 있는 popup / menubar 만 clipboard 텍스트/이미지 읽기 허용. main 윈도우 renderer 가 손상돼도 clipboard 데이터에 접근 불가. code-review v1 follow-up §21.",
+  "platforms": ["macOS"],
+  "windows": ["popup", "menubar"],
+  "permissions": [
+    "clipboard-manager:allow-read-text",
+    "clipboard-manager:allow-read-image"
+  ]
+}

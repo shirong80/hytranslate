@@ -9,6 +9,10 @@ export type AppError =
   | { kind: 'NetworkBlocked' }
   | { kind: 'PermissionRequired'; feature: string }
   | { kind: 'InvalidShortcut'; input: string }
+  | { kind: 'ClipboardEmpty' }
+  | { kind: 'ClipboardUnsupported' }
+  | { kind: 'ClipboardReadFailed'; message: string }
+  | { kind: 'CopyFailed'; message: string }
   | { kind: 'Internal'; message: string };
 
 export type AppErrorKind = AppError['kind'];
@@ -35,6 +39,14 @@ export function messageFor(error: AppError): string {
       return t('errors.PermissionRequired');
     case 'InvalidShortcut':
       return t('errors.InvalidShortcut', { input: error.input });
+    case 'ClipboardEmpty':
+      return t('errors.ClipboardEmpty');
+    case 'ClipboardUnsupported':
+      return t('errors.ClipboardUnsupported');
+    case 'ClipboardReadFailed':
+      return t('errors.ClipboardReadFailed');
+    case 'CopyFailed':
+      return t('errors.CopyFailed');
     case 'Internal':
       return t('errors.Internal');
   }
@@ -56,6 +68,8 @@ export function isAppError(value: unknown): value is AppError {
     case 'OllamaNotRunning':
     case 'Cancelled':
     case 'NetworkBlocked':
+    case 'ClipboardEmpty':
+    case 'ClipboardUnsupported':
       return true;
     case 'ModelMissing':
       return hasStringField(value, 'model');
@@ -65,6 +79,9 @@ export function isAppError(value: unknown): value is AppError {
       return hasStringField(value, 'feature');
     case 'InvalidShortcut':
       return hasStringField(value, 'input');
+    case 'ClipboardReadFailed':
+    case 'CopyFailed':
+      return hasStringField(value, 'message');
     case 'Internal':
       return hasStringField(value, 'message');
     default:

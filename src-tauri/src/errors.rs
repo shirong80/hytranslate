@@ -33,6 +33,21 @@ pub enum AppError {
     #[error("invalid shortcut accelerator: {input}")]
     InvalidShortcut { input: String },
 
+    // 아래 Clipboard / Copy 에러는 FE 가 생성하고 사용자에게 inline 노출하는 변형이지만,
+    // FE 의 AppError union 과 동일한 shape 을 유지해 messageFor 분기 / 시리얼라이즈 검증
+    // (frontend ↔ backend mirror) 일관성을 보장하기 위해 backend 에도 등록한다.
+    #[error("clipboard is empty")]
+    ClipboardEmpty,
+
+    #[error("clipboard contents not supported")]
+    ClipboardUnsupported,
+
+    #[error("clipboard read failed: {message}")]
+    ClipboardReadFailed { message: String },
+
+    #[error("copy failed: {message}")]
+    CopyFailed { message: String },
+
     #[error("internal error: {message}")]
     Internal { message: String },
 }

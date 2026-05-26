@@ -11,7 +11,8 @@ export const ko = Object.freeze({
   'translation.output.retranslate': '다시 번역',
 
   'translation.status.idle': '대기 중',
-  'translation.status.debouncing': '입력 중',
+  'translation.status.typing': '입력 중',
+  'translation.status.detecting': '언어 감지 중…',
   'translation.status.translating': '번역 중…',
   'translation.status.completed': '완료',
   'translation.status.cancelled': '취소됨',
@@ -40,6 +41,21 @@ export const ko = Object.freeze({
   'settings.section.shortcut': '단축키',
   'settings.section.system': '시스템',
   'settings.section.appearance': '모양',
+  'settings.section.data': '데이터',
+  'settings.legacyMigration.banner':
+    '이전 위치({legacyDir})에 데이터 사본이 남아 있습니다. 새 위치로 정상 이전된 것을 확인했다면 정리할 수 있습니다.',
+  'settings.legacyMigration.cleanup': '이전 위치 정리하기',
+  'settings.legacyMigration.confirmTitle': '이전 위치 정리',
+  'settings.legacyMigration.confirm':
+    '이전 위치의 데이터를 새 위치의 legacy-backup-<timestamp>/ 폴더로 이동합니다. 현재 데이터에는 영향이 없습니다. 계속할까요?',
+  'settings.legacyMigration.confirmPhraseLabel':
+    '계속하려면 폴더 이름 "{phrase}"을(를) 정확히 입력하세요.',
+  'settings.legacyMigration.confirmPhrasePlaceholder': '폴더 이름 입력',
+  'settings.legacyMigration.confirmPhraseMismatch':
+    '입력한 폴더 이름이 일치하지 않습니다. 정확히 "{phrase}"을(를) 입력해 주세요.',
+  'settings.legacyMigration.cleanupBusy': '정리하는 중…',
+  'settings.legacyMigration.completed':
+    '완료했습니다. 이전 위치의 데이터를 {backupDir}에 백업했습니다. (이동된 파일: {moved}개)',
   'settings.activeModel.label': '활성 모델',
   'settings.activeModel.hy7b': 'Hy-MT2 7B (권장)',
   'settings.activeModel.hy1_8b': 'Hy-MT2 1.8B (저메모리)',
@@ -86,6 +102,7 @@ export const ko = Object.freeze({
   'history.export.csv': 'CSV 내보내기',
   'history.export.json': 'JSON 내보내기',
   'history.export.success': '{count}건을 {path}에 저장했습니다.',
+  'history.export.notice': '내보낸 파일에는 원문/결과가 평문으로 포함됩니다.',
   'history.detail.empty': '왼쪽 목록에서 항목을 선택하세요.',
   'history.detail.source': '원문',
   'history.detail.translated': '번역',
@@ -107,6 +124,11 @@ export const ko = Object.freeze({
   'errors.NetworkBlocked': '네트워크 접근이 차단되었습니다.',
   'errors.PermissionRequired': '전역 단축키를 사용하려면 macOS 손쉬운 사용 권한 설정이 필요합니다.',
   'errors.InvalidShortcut': '단축키 형식이 올바르지 않습니다: {input}',
+  'errors.ClipboardEmpty': '클립보드에 텍스트가 없습니다.',
+  'errors.ClipboardUnsupported': '이미지는 번역할 수 없습니다. 텍스트를 복사해 다시 시도해 주세요.',
+  'errors.ClipboardReadFailed':
+    '클립보드를 읽을 수 없습니다. macOS 손쉬운 사용 권한과 앱 권한을 확인해 주세요.',
+  'errors.CopyFailed': '결과를 복사하지 못했습니다. 다시 시도해 주세요.',
   'errors.Internal': '번역 중 문제가 발생했습니다. Ollama 상태를 확인한 뒤 다시 시도해 주세요.',
   'errors.action.retry': '다시 시도',
   'errors.action.openOllamaDownload': 'Ollama 공식 다운로드',

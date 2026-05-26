@@ -1,7 +1,14 @@
-import { ArrowLeft, Check, ExternalLink, Loader2, Trash2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { AlertCircle, ArrowLeft, Check, ExternalLink, Loader2, Trash2 } from 'lucide-react';
+import { useCallback, useEffect, useState } from 'react';
 
 import { useHistoryStore } from '@features/history/store';
+import {
+  cleanupLegacyDataDir,
+  getCleanupConfirmationPhrase,
+  getLegacyMigrationStatus,
+  issueCleanupToken,
+} from '@features/paths/ipc';
+import type { MigrationStatusView } from '@features/paths/types';
 import { t } from '@i18n/ko';
 import { invoke } from '@lib/ipc/client';
 import { messageFor } from '@lib/ipc/errors';
@@ -160,6 +167,10 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
             </select>
           </Field>
         </Section>
+
+        <Section title={t('settings.section.data')}>
+          <LegacyMigrationBanner />
+        </Section>
       </div>
 
       <footer className="flex items-center justify-between border-t border-neutral-200 pt-4 dark:border-neutral-800">
@@ -183,6 +194,123 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
               : t('settings.action.save')}
         </button>
       </footer>
+    </div>
+  );
+}
+
+function LegacyMigrationBanner() {
+  const [status, setStatus] = useState<MigrationStatusView | null>(null);
+  const [confirmationPhrase, setConfirmationPhrase] = useState<string | null>(null);
+  const [typedConfirmation, setTypedConfirmation] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [completedMessage, setCompletedMessage] = useState<string | null>(null);
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
+
+  const refresh = useCallback(async () => {
+    try {
+      const [view, phrase] = await Promise.all([
+        getLegacyMigrationStatus(),
+        getCleanupConfirmationPhrase().catch(() => null),
+      ]);
+      setStatus(view);
+      setConfirmationPhrase(phrase);
+    } catch {
+      // 자동 단계 outcome 이 등록되지 않은 환경(개발 등)에서는 silent.
+      setStatus(null);
+      setConfirmationPhrase(null);
+    }
+  }, []);
+
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
+
+  const handleCleanup = useCallback(async () => {
+    if (!confirmationPhrase) return;
+    const typed = typedConfirmation.trim();
+    if (typed !== confirmationPhrase) {
+      setErrorMessage(
+        t('settings.legacyMigration.confirmPhraseMismatch', { phrase: confirmationPhrase }),
+      );
+      return;
+    }
+    if (!window.confirm(t('settings.legacyMigration.confirm'))) return;
+    setBusy(true);
+    setErrorMessage(null);
+    try {
+      // code-review v1 follow-up review §10 (Major 1 v3) — backend 가 user-typed
+      // confirmation phrase 를 검증해야만 token 을 발급한다. cleanup 시점에도 같은
+      // confirmation 을 다시 검증 (defense in depth). renderer 가 token/cleanup
+      // 명령만으로 cleanup 을 우회 실행할 수 없다.
+      const token = await issueCleanupToken(typed);
+      const report = await cleanupLegacyDataDir(token, typed);
+      if (report.kind === 'Completed') {
+        setCompletedMessage(
+          t('settings.legacyMigration.completed', {
+            backupDir: report.backupDir,
+            moved: report.moved,
+          }),
+        );
+      }
+      setTypedConfirmation('');
+      await refresh();
+    } catch (e) {
+      setErrorMessage(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  }, [confirmationPhrase, typedConfirmation, refresh]);
+
+  if (!status || !status.legacyCleanable || !confirmationPhrase) {
+    if (completedMessage) {
+      return <p className="text-xs text-neutral-600 dark:text-neutral-400">{completedMessage}</p>;
+    }
+    return null;
+  }
+
+  const typedTrimmed = typedConfirmation.trim();
+  const phraseMatches = typedTrimmed === confirmationPhrase;
+
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100">
+      <div className="flex items-start gap-2">
+        <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
+        <p>
+          {t('settings.legacyMigration.banner', {
+            legacyDir: status.legacyDir ?? '',
+          })}
+        </p>
+      </div>
+      <label htmlFor="legacy-cleanup-confirm" className="flex flex-col gap-1">
+        <span className="text-[11px]">
+          {t('settings.legacyMigration.confirmPhraseLabel', { phrase: confirmationPhrase })}
+        </span>
+        <input
+          id="legacy-cleanup-confirm"
+          type="text"
+          value={typedConfirmation}
+          onChange={(e) => setTypedConfirmation(e.target.value)}
+          placeholder={t('settings.legacyMigration.confirmPhrasePlaceholder')}
+          spellCheck={false}
+          autoComplete="off"
+          autoCorrect="off"
+          className="w-full rounded-md border border-amber-400 bg-white px-2 py-1 font-mono text-[11px] text-neutral-900 focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-amber-700 dark:bg-neutral-900 dark:text-neutral-100"
+        />
+      </label>
+      {errorMessage ? (
+        <p className="text-[11px] text-rose-600 dark:text-rose-400">{errorMessage}</p>
+      ) : null}
+      <div>
+        <button
+          type="button"
+          onClick={handleCleanup}
+          disabled={busy || !phraseMatches}
+          className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-white px-2 py-1 text-[11px] font-medium text-amber-900 hover:border-amber-500 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-amber-700 dark:bg-neutral-900 dark:text-amber-100 dark:hover:bg-neutral-800"
+        >
+          {busy ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+          {busy ? t('settings.legacyMigration.cleanupBusy') : t('settings.legacyMigration.cleanup')}
+        </button>
+      </div>
     </div>
   );
 }

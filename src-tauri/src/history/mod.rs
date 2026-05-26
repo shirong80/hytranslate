@@ -73,6 +73,8 @@ impl HistoryRepo {
             .map_err(|e| AppError::internal(format!("db conn acquire: {e}")))
     }
 
+    /// 단일 INSERT — cancel/persist atomicity 는 호출처 (commands/translate.rs) 의 terminal
+    /// mutex 가 보장한다 (code-review v1 follow-up review §10, Critical 1 v3).
     pub fn insert(&self, record: InsertRecord) -> AppResult<()> {
         let conn = self.conn()?;
         let lang = serde_json::to_string(&record.source_language)

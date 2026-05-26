@@ -11,7 +11,7 @@
 use std::fs;
 use std::io::{ErrorKind, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::RwLock;
+use std::sync::{Mutex, RwLock};
 
 use crate::errors::{AppError, AppResult};
 
@@ -20,6 +20,10 @@ use super::Settings;
 pub struct SettingsStore {
     state: RwLock<Settings>,
     file_path: PathBuf,
+    /// Major 6 throttle — 가장 최근에 disk 까지 flush 된 `last_checked_at` 의 unix ts.
+    /// in-memory 값과는 분리한다. 그래야 memory 가 매 호출마다 갱신돼도 flush 비교 기준은
+    /// 옮겨가지 않는다.
+    last_checked_flushed_unix: Mutex<Option<i64>>,
 }
 
 impl SettingsStore {
@@ -48,9 +52,15 @@ impl SettingsStore {
                 return Err(AppError::internal(format!("settings load failed: {err}")));
             }
         };
+        let last_flushed = settings
+            .model_install_state
+            .last_checked_at
+            .as_deref()
+            .and_then(parse_iso8601_to_unix);
         Ok(Self {
             state: RwLock::new(settings),
             file_path,
+            last_checked_flushed_unix: Mutex::new(last_flushed),
         })
     }
 
@@ -68,6 +78,45 @@ impl SettingsStore {
         *guard = new_settings.clone();
         Ok(new_settings)
     }
+
+    /// Major 6 — `get_ollama_status` 같은 hot path 에서 호출. 마지막 영속된
+    /// `last_checked_at` 과 비교해 5분 이상 경과한 경우에만 disk write.
+    /// in-memory snapshot 은 항상 갱신해 다른 영역의 다음 save 와 함께 flush 된다.
+    /// `now_iso8601` 은 호출자가 주입 — 테스트가 시간을 통제할 수 있게.
+    /// 반환: true=disk 까지 flush 됨, false=in-memory 만 갱신.
+    pub fn maybe_touch_last_checked(&self, now_iso8601: String, now_unix: i64) -> bool {
+        const THROTTLE_SECS: i64 = 5 * 60;
+        let mut guard = self.state.write().expect("settings lock poisoned");
+        let mut flushed_guard = self
+            .last_checked_flushed_unix
+            .lock()
+            .expect("flushed lock poisoned");
+        let recently_saved = flushed_guard
+            .map(|prev| now_unix - prev < THROTTLE_SECS)
+            .unwrap_or(false);
+
+        guard.model_install_state.last_checked_at = Some(now_iso8601.clone());
+
+        if recently_saved {
+            return false;
+        }
+        match save_to_disk(&self.file_path, &guard) {
+            Ok(()) => {
+                *flushed_guard = Some(now_unix);
+                true
+            }
+            Err(e) => {
+                tracing::warn!(error = ?e, "last_checked_at disk flush failed; memory updated");
+                false
+            }
+        }
+    }
+}
+
+fn parse_iso8601_to_unix(s: &str) -> Option<i64> {
+    chrono::DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|dt| dt.timestamp())
 }
 
 fn save_to_disk(path: &Path, settings: &Settings) -> AppResult<()> {
@@ -204,6 +253,71 @@ mod tests {
             );
         }
 
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn maybe_touch_last_checked_throttles_5min() {
+        let path = tmp_path("throttle");
+        let store = SettingsStore::load(&path).unwrap();
+
+        // 첫 호출 — 영속.
+        assert!(store.maybe_touch_last_checked("2026-05-26T12:00:00Z".to_string(), 1_748_265_600));
+
+        // 2분 후 — 5분 미만이므로 disk 미flush, 메모리만 갱신.
+        assert!(!store
+            .maybe_touch_last_checked("2026-05-26T12:02:00Z".to_string(), 1_748_265_600 + 120));
+        // 디스크 값은 첫 호출의 timestamp 그대로여야 한다.
+        let reloaded = SettingsStore::load(&path).unwrap();
+        assert_eq!(
+            reloaded
+                .get()
+                .model_install_state
+                .last_checked_at
+                .as_deref(),
+            Some("2026-05-26T12:00:00Z")
+        );
+        // 메모리 값은 최근 호출로 갱신돼 있어야 한다.
+        assert_eq!(
+            store.get().model_install_state.last_checked_at.as_deref(),
+            Some("2026-05-26T12:02:00Z")
+        );
+
+        // 5분 초과 — 다시 disk flush.
+        assert!(
+            store.maybe_touch_last_checked("2026-05-26T12:06:00Z".to_string(), 1_748_265_600 + 360)
+        );
+        let reloaded2 = SettingsStore::load(&path).unwrap();
+        assert_eq!(
+            reloaded2
+                .get()
+                .model_install_state
+                .last_checked_at
+                .as_deref(),
+            Some("2026-05-26T12:06:00Z")
+        );
+
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn legacy_settings_missing_model_install_state_loads() {
+        let path = tmp_path("legacy");
+        // model_install_state 가 없는 이전 settings.json.
+        let legacy_json = r#"{
+            "globalHotkey": "Cmd+Shift+T",
+            "activeModel": "hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M",
+            "autoCopyAfterTranslation": false,
+            "saveHistory": true,
+            "startAtLogin": false,
+            "hideDockIcon": false,
+            "ollamaEndpoint": "http://localhost:11434",
+            "theme": "System",
+            "onboardingCompleted": false
+        }"#;
+        fs::write(&path, legacy_json).unwrap();
+        let store = SettingsStore::load(&path).unwrap();
+        assert!(store.get().model_install_state.last_checked_at.is_none());
         std::fs::remove_file(&path).ok();
     }
 }
