@@ -15,6 +15,7 @@ export interface EnvironmentReport {
 }
 
 export interface OllamaStatus {
+  installed: boolean;
   running: boolean;
   endpoint: string;
   models: string[];

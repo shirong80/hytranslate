@@ -18,7 +18,7 @@ import { useEffect } from 'react';
 import { t } from '@i18n/ko';
 import { messageFor } from '@lib/ipc/errors';
 
-import { openOllamaDownloadPage } from '../ipc';
+import { openAccessibilitySettings, openOllamaDownloadPage } from '../ipc';
 import { useOnboardingStore, type PullProgressView } from '../store';
 import { HY_MT2_1_8B, HY_MT2_7B, ONBOARDING_STEPS, type OnboardingStep } from '../types';
 
@@ -289,10 +289,21 @@ function OllamaStep() {
   const loading = useOnboardingStore((s) => s.loading);
   const error = useOnboardingStore((s) => s.error);
   const refresh = useOnboardingStore((s) => s.refreshOllamaStatus);
+  const tryStart = useOnboardingStore((s) => s.tryStartOllama);
   const goNext = useOnboardingStore((s) => s.goNext);
   const goPrev = useOnboardingStore((s) => s.goPrev);
 
   const running = ollama?.running === true;
+  const installed = ollama?.installed === true;
+  // 3 분기 (PRD §6.1 step 3): running / installed-but-stopped / not-installed.
+  const stateKey = running ? 'running' : installed ? 'installedButStopped' : 'notInstalled';
+  const stateMessage = t(
+    stateKey === 'running'
+      ? 'onboarding.ollama.running'
+      : stateKey === 'installedButStopped'
+        ? 'onboarding.ollama.installedButStopped'
+        : 'onboarding.ollama.notInstalled',
+  );
 
   return (
     <StepCard
@@ -320,9 +331,7 @@ function OllamaStep() {
           ) : (
             <AlertCircle className="mt-0.5 size-4 shrink-0" aria-hidden />
           )}
-          <span>
-            {running ? t('onboarding.ollama.running') : t('onboarding.ollama.notRunning')}
-          </span>
+          <span>{stateMessage}</span>
         </div>
         <div className="text-xs text-neutral-500 dark:text-neutral-400">
           endpoint: <code>{ollama?.endpoint ?? '—'}</code>
@@ -341,7 +350,18 @@ function OllamaStep() {
             )}
             {t('onboarding.action.recheck')}
           </button>
-          {!running ? (
+          {stateKey === 'installedButStopped' ? (
+            <button
+              type="button"
+              onClick={() => void tryStart()}
+              disabled={loading}
+              className="inline-flex items-center gap-1.5 rounded-md bg-neutral-900 px-3 py-1.5 text-xs font-medium text-white hover:bg-neutral-800 disabled:cursor-not-allowed disabled:opacity-50 dark:bg-neutral-100 dark:text-neutral-900 dark:hover:bg-white"
+            >
+              {loading ? <Loader2 className="size-3 animate-spin" aria-hidden /> : null}
+              {t('onboarding.ollama.tryStart')}
+            </button>
+          ) : null}
+          {stateKey === 'notInstalled' ? (
             <button
               type="button"
               onClick={() => void openOllamaDownloadPage()}
@@ -581,6 +601,16 @@ function PermissionsStep() {
           <span>{t('onboarding.permissions.note')}</span>
         </li>
       </ul>
+      <div className="mt-3">
+        <button
+          type="button"
+          onClick={() => void openAccessibilitySettings()}
+          className="inline-flex items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-3 py-1.5 text-xs text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+        >
+          <ExternalLink className="size-3" aria-hidden />
+          {t('onboarding.permissions.openSettings')}
+        </button>
+      </div>
     </StepCard>
   );
 }

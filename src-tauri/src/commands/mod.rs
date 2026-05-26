@@ -137,6 +137,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             history::export_history_json,
             onboarding::detect_environment,
             onboarding::get_ollama_status,
+            onboarding::try_start_ollama,
             onboarding::pull_model,
             onboarding::cancel_model_pull,
             onboarding::complete_onboarding,

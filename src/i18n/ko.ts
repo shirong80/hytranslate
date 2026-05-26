@@ -152,9 +152,12 @@ export const ko = Object.freeze({
   'onboarding.ollama.title': 'Ollama 준비',
   'onboarding.ollama.description': 'Ollama가 로컬에서 실행 중인지 확인합니다.',
   'onboarding.ollama.running': 'Ollama가 실행 중입니다.',
-  'onboarding.ollama.notRunning':
-    'Ollama가 실행되어 있지 않습니다. 공식 다운로드 후 실행해 주세요.',
+  'onboarding.ollama.installedButStopped':
+    'Ollama가 설치되어 있지만 실행되지 않았습니다. 실행을 시도할 수 있습니다.',
+  'onboarding.ollama.notInstalled':
+    'Ollama가 설치되어 있지 않습니다. 공식 다운로드 후 실행해 주세요.',
   'onboarding.ollama.openDownload': '공식 다운로드 열기',
+  'onboarding.ollama.tryStart': 'Ollama 실행 시도',
 
   'onboarding.model.title': '모델 다운로드',
   'onboarding.model.description': '추천 모델을 그대로 진행하거나 다른 모델을 선택할 수 있습니다.',
@@ -175,6 +178,7 @@ export const ko = Object.freeze({
   'onboarding.permissions.accessibility':
     'Cmd+Shift+T 등 전역 단축키 등록을 위해 시스템 설정 → 손쉬운 사용에서 HyTranslate Mac을 허용해 주세요.',
   'onboarding.permissions.note': '나중에 설정 화면의 안내에서 다시 요청할 수 있습니다.',
+  'onboarding.permissions.openSettings': '시스템 설정 열기',
 
   'onboarding.history.title': '이력 저장 안내',
   'onboarding.history.description':

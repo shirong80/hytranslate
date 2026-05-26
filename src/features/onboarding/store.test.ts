@@ -6,20 +6,24 @@ import { HY_MT2_1_8B, HY_MT2_7B, type EnvironmentReport, type OllamaStatus } fro
 const mocks = vi.hoisted(() => ({
   detectEnvironment: vi.fn(),
   getOllamaStatus: vi.fn(),
+  tryStartOllama: vi.fn(),
   pullModel: vi.fn(),
   cancelModelPull: vi.fn(),
   completeOnboarding: vi.fn(),
   openOllamaDownloadPage: vi.fn(),
+  openAccessibilitySettings: vi.fn(),
   attachModelPullListeners: vi.fn(),
 }));
 
 vi.mock('./ipc', () => ({
   detectEnvironment: mocks.detectEnvironment,
   getOllamaStatus: mocks.getOllamaStatus,
+  tryStartOllama: mocks.tryStartOllama,
   pullModel: mocks.pullModel,
   cancelModelPull: mocks.cancelModelPull,
   completeOnboarding: mocks.completeOnboarding,
   openOllamaDownloadPage: mocks.openOllamaDownloadPage,
+  openAccessibilitySettings: mocks.openAccessibilitySettings,
   attachModelPullListeners: mocks.attachModelPullListeners,
 }));
 
@@ -37,6 +41,7 @@ function env(overrides: Partial<EnvironmentReport> = {}): EnvironmentReport {
 
 function status(overrides: Partial<OllamaStatus> = {}): OllamaStatus {
   return {
+    installed: true,
     running: true,
     endpoint: 'http://localhost:11434',
     models: [],
@@ -88,6 +93,37 @@ describe('useOnboardingStore', () => {
     expect(useOnboardingStore.getState().error).toEqual({ kind: 'OllamaUnavailable' });
   });
 
+  it('refreshOllamaStatus carries installed=false when ollama is not installed', async () => {
+    mocks.getOllamaStatus.mockResolvedValue(status({ installed: false, running: false }));
+    await useOnboardingStore.getState().refreshOllamaStatus();
+    expect(useOnboardingStore.getState().ollama?.installed).toBe(false);
+  });
+
+  it('tryStartOllama invokes ipc and refreshes status', async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.tryStartOllama.mockResolvedValue(undefined);
+      mocks.getOllamaStatus.mockResolvedValue(status({ running: true }));
+      const promise = useOnboardingStore.getState().tryStartOllama();
+      // 내부 backoff(800ms) 를 가짜 타이머로 즉시 진행.
+      await vi.runAllTimersAsync();
+      await promise;
+      expect(mocks.tryStartOllama).toHaveBeenCalledTimes(1);
+      expect(mocks.getOllamaStatus).toHaveBeenCalledTimes(1);
+      expect(useOnboardingStore.getState().ollama?.running).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('tryStartOllama surfaces error when ipc rejects', async () => {
+    mocks.tryStartOllama.mockRejectedValue({ kind: 'OllamaUnavailable' });
+    await useOnboardingStore.getState().tryStartOllama();
+    expect(useOnboardingStore.getState().error).toEqual({ kind: 'OllamaUnavailable' });
+    // ipc 실패 시 status 재조회는 시도하지 않는다.
+    expect(mocks.getOllamaStatus).not.toHaveBeenCalled();
+  });
+
   it('startPull sets pullingModel and clears on success via listener', async () => {
     mocks.pullModel.mockResolvedValue(undefined);
     await useOnboardingStore.getState().startPull(HY_MT2_7B);
@@ -115,11 +151,19 @@ describe('useOnboardingStore', () => {
     expect(s.progress).toBeNull();
   });
 
-  it('finish persists onboarding flag and moves to done', async () => {
+  it('finish persists onboarding flag with currently selected model and moves to done', async () => {
     mocks.completeOnboarding.mockResolvedValue(undefined);
+    useOnboardingStore.getState().selectModel(HY_MT2_1_8B);
     await useOnboardingStore.getState().finish();
     expect(mocks.completeOnboarding).toHaveBeenCalledTimes(1);
+    expect(mocks.completeOnboarding).toHaveBeenCalledWith(HY_MT2_1_8B);
     expect(useOnboardingStore.getState().step).toBe('done');
+  });
+
+  it('finish defaults to selectedModel (7B) when user has not changed', async () => {
+    mocks.completeOnboarding.mockResolvedValue(undefined);
+    await useOnboardingStore.getState().finish();
+    expect(mocks.completeOnboarding).toHaveBeenCalledWith(HY_MT2_7B);
   });
 
   it('goNext advances by one step and stops at the last', () => {

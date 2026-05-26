@@ -9,6 +9,7 @@ import {
   detectEnvironment,
   getOllamaStatus,
   pullModel as pullModelIpc,
+  tryStartOllama as tryStartOllamaIpc,
 } from './ipc';
 import type { EnvironmentReport, OllamaStatus, OnboardingStep, PullProgressPayload } from './types';
 import { HY_MT2_7B, ONBOARDING_STEPS } from './types';
@@ -42,6 +43,7 @@ export interface OnboardingActions {
   goPrev: () => void;
   loadEnvironment: () => Promise<void>;
   refreshOllamaStatus: () => Promise<void>;
+  tryStartOllama: () => Promise<void>;
   selectModel: (model: string) => void;
   startPull: (model: string) => Promise<void>;
   cancelPull: () => Promise<void>;
@@ -105,6 +107,24 @@ export const useOnboardingStore = create<OnboardingState & OnboardingActions>()(
     }
   },
 
+  tryStartOllama: async () => {
+    set({ loading: true, error: null });
+    try {
+      await tryStartOllamaIpc();
+    } catch (err) {
+      set({ error: toAppError(err), loading: false });
+      return;
+    }
+    // Ollama 가 데몬을 띄우기까지 잠시 시간이 필요. 짧은 backoff 후 status 재조회.
+    await new Promise((resolve) => setTimeout(resolve, 800));
+    try {
+      const ollama = await getOllamaStatus();
+      set({ ollama, loading: false });
+    } catch (err) {
+      set({ error: toAppError(err), loading: false });
+    }
+  },
+
   selectModel: (model) => set({ selectedModel: model, error: null }),
 
   startPull: async (model) => {
@@ -136,9 +156,10 @@ export const useOnboardingStore = create<OnboardingState & OnboardingActions>()(
   },
 
   finish: async () => {
+    const { selectedModel } = get();
     set({ loading: true, error: null });
     try {
-      await completeOnboardingIpc();
+      await completeOnboardingIpc(selectedModel);
       set({ step: 'done', loading: false });
     } catch (err) {
       set({ error: toAppError(err), loading: false });

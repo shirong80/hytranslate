@@ -32,6 +32,10 @@ export async function getOllamaStatus(): Promise<OllamaStatus> {
   return invoke<OllamaStatus>('get_ollama_status');
 }
 
+export async function tryStartOllama(): Promise<void> {
+  return invoke<void>('try_start_ollama');
+}
+
 export async function pullModel(model: string): Promise<void> {
   return invoke<void>('pull_model', { request: { model } });
 }
@@ -40,8 +44,12 @@ export async function cancelModelPull(model: string): Promise<void> {
   return invoke<void>('cancel_model_pull', { request: { model } });
 }
 
-export async function completeOnboarding(): Promise<void> {
-  return invoke<void>('complete_onboarding');
+export async function completeOnboarding(activeModel: string): Promise<void> {
+  return invoke<void>('complete_onboarding', { request: { activeModel } });
+}
+
+export async function openAccessibilitySettings(): Promise<void> {
+  return invoke<void>('open_accessibility_settings');
 }
 
 export async function openOllamaDownloadPage(): Promise<void> {

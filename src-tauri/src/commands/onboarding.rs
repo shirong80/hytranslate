@@ -2,11 +2,14 @@
 //!
 //! 노출 command:
 //! - `detect_environment` — macOS 버전 / arch / 메모리 / 추천 모델.
-//! - `get_ollama_status` — `/api/tags` 호출로 실행 여부 + 설치 모델 조회.
+//! - `get_ollama_status` — 설치/실행 여부 + 설치 모델 조회.
+//! - `try_start_ollama` — 설치돼 있고 실행되지 않은 경우 자동 실행 시도 (PRD §8.4).
 //! - `pull_model` — 사용자 승인 후 model pull 시작 (streaming).
 //! - `cancel_model_pull` — 진행 중 pull 취소.
-//! - `complete_onboarding` — `Settings.onboarding_completed = true` flush.
+//! - `complete_onboarding` — 선택 모델을 `active_model` 로 영속화 + flag set.
 
+use std::path::Path;
+use std::process::Command;
 use std::sync::Arc;
 
 use dashmap::DashMap;
@@ -19,7 +22,7 @@ use crate::errors::{AppError, AppResult};
 use crate::events::{
     MODEL_PULL_COMPLETED, MODEL_PULL_ERROR, MODEL_PULL_PROGRESS, MODEL_PULL_STARTED,
 };
-use crate::ollama::{ChunkFlow, OllamaClient, PullChunk};
+use crate::ollama::{ChunkFlow, OllamaClient, PullChunk, MODEL_HY_MT2_1_8B, MODEL_HY_MT2_7B};
 use crate::settings::SettingsStore;
 
 /// 진행 중인 model pull token. request 별로 등록되며 `cancel_model_pull` 로 cancel.
@@ -46,6 +49,11 @@ impl PullRegistry {
         }
     }
 
+    /// 같은 모델 pull 이 이미 등록돼 있으면 true.
+    pub fn contains(&self, model: &str) -> bool {
+        self.tokens.contains_key(model)
+    }
+
     #[cfg(test)]
     pub fn len(&self) -> usize {
         self.tokens.len()
@@ -60,6 +68,8 @@ impl PullRegistry {
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct OllamaStatus {
+    /// Ollama 가 디스크에 설치되어 있는지 (실행과 별개).
+    pub installed: bool,
     /// `/api/tags` 가 200 으로 응답하면 실행 중으로 본다.
     pub running: bool,
     pub endpoint: String,
@@ -77,6 +87,14 @@ pub struct PullModelRequest {
 #[serde(rename_all = "camelCase")]
 pub struct CancelPullRequest {
     pub model: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CompleteOnboardingRequest {
+    /// 사용자가 onboarding 의 model step 에서 선택한 활성 모델.
+    /// 허용되는 값: `MODEL_HY_MT2_7B` 또는 `MODEL_HY_MT2_1_8B` (PRD §8.4).
+    pub active_model: String,
 }
 
 #[derive(Debug, Serialize, Clone)]
@@ -108,6 +126,35 @@ struct PullErrorPayload {
     error: AppError,
 }
 
+/// 코드리뷰 Med 2 — backend trust boundary. FE radio 만 UI 제약. 백엔드도 지원 모델만 허용.
+fn is_supported_model(model: &str) -> bool {
+    model == MODEL_HY_MT2_7B || model == MODEL_HY_MT2_1_8B
+}
+
+/// 코드리뷰 Med 1 — Ollama 가 디스크에 설치돼 있는지 감지. 두 군데 중 하나라도 있으면 설치된 것으로 본다.
+/// 1) `/Applications/Ollama.app` — GUI 설치 (PKG 공식 배포본 기본 위치).
+/// 2) `which ollama` 가 0 으로 종료 — CLI / brew 설치본.
+#[cfg(target_os = "macos")]
+fn detect_ollama_installed() -> bool {
+    if Path::new("/Applications/Ollama.app").exists() {
+        return true;
+    }
+    Command::new("which")
+        .arg("ollama")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn detect_ollama_installed() -> bool {
+    Command::new("which")
+        .arg("ollama")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
 #[tauri::command]
 pub async fn detect_environment() -> AppResult<EnvironmentReport> {
     environment::detect()
@@ -119,19 +166,42 @@ pub async fn get_ollama_status(
     settings: tauri::State<'_, Arc<SettingsStore>>,
 ) -> AppResult<OllamaStatus> {
     let endpoint = settings.get().ollama_endpoint;
+    let installed = detect_ollama_installed();
     match client.list_models(&endpoint).await {
         Ok(models) => Ok(OllamaStatus {
+            installed: true,
             running: true,
             endpoint,
             models,
         }),
         Err(AppError::OllamaNotRunning) => Ok(OllamaStatus {
+            installed,
             running: false,
             endpoint,
             models: Vec::new(),
         }),
         Err(err) => Err(err),
     }
+}
+
+/// PRD §8.4 — Ollama 가 실행되지 않은 경우 자동 실행을 시도한다. 실패 시 사용자에게 직접
+/// 실행 안내를 표시한다 (FE 가 status 재조회 결과로 판단).
+///
+/// macOS 에서는 `open -a Ollama` 로 GUI 앱을 띄운다. Ollama.app 이 실행되면 백그라운드
+/// 데몬도 함께 기동된다. `which ollama` 만 있는 경우 (`ollama serve` CLI) 는 v1 범위 외.
+#[tauri::command]
+pub async fn try_start_ollama() -> AppResult<()> {
+    if !detect_ollama_installed() {
+        return Err(AppError::OllamaUnavailable);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .args(["-a", "Ollama"])
+            .spawn()
+            .map_err(AppError::internal)?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -142,8 +212,20 @@ pub async fn pull_model<R: tauri::Runtime>(
     settings: tauri::State<'_, Arc<SettingsStore>>,
     request: PullModelRequest,
 ) -> AppResult<()> {
-    if request.model.trim().is_empty() {
-        return Err(AppError::internal("pull_model: model is empty"));
+    if !is_supported_model(&request.model) {
+        return Err(AppError::internal(format!(
+            "pull_model: unsupported model '{}'",
+            request.model
+        )));
+    }
+    // 같은 모델 pull 이 이미 진행 중이면 새로 spawn 하지 않는다. token 을 교체하면
+    // 기존 worker 는 cancel 없이 살아남아 progress 이벤트를 emit 한 뒤 success 시 두 번
+    // completed 가 발생할 수 있다 — 사용자의 명시 cancel + 재시작 흐름이 아니면 거부.
+    if registry.contains(&request.model) {
+        return Err(AppError::internal(format!(
+            "pull_model: already in progress for '{}'",
+            request.model
+        )));
     }
     let endpoint = settings.get().ollama_endpoint;
     let token = CancellationToken::new();
@@ -170,13 +252,26 @@ pub async fn cancel_model_pull(
     Ok(())
 }
 
+/// 코드리뷰 High 1 — onboarding 종료 시 사용자가 선택/다운로드한 모델을 `active_model`
+/// 로 함께 영속화한다. flag 만 켜 두면 1.8B 다운로드 / 8 GB Mac 사용자가 첫 번역에서
+/// `ModelMissing` 으로 실패한다.
 #[tauri::command]
-pub async fn complete_onboarding(store: tauri::State<'_, Arc<SettingsStore>>) -> AppResult<()> {
+pub async fn complete_onboarding(
+    store: tauri::State<'_, Arc<SettingsStore>>,
+    request: CompleteOnboardingRequest,
+) -> AppResult<()> {
+    if !is_supported_model(&request.active_model) {
+        return Err(AppError::internal(format!(
+            "complete_onboarding: unsupported model '{}'",
+            request.active_model
+        )));
+    }
     let mut current = store.get();
-    if current.onboarding_completed {
+    if current.onboarding_completed && current.active_model == request.active_model {
         return Ok(());
     }
     current.onboarding_completed = true;
+    current.active_model = request.active_model;
     store.update(current)?;
     Ok(())
 }
@@ -234,8 +329,6 @@ async fn run_pull<R: tauri::Runtime>(
         }
         Err(AppError::Cancelled) => {
             tracing::info!(model = %model, "model-pull:cancelled");
-            // 취소는 별도 이벤트 없이 stream 정지로 처리한다. FE 는 사용자 액션 시점에
-            // 이미 store 상태를 비웠으므로 추가 이벤트가 필요 없다.
         }
         Err(err) => {
             tracing::warn!(model = %model, error.kind = ?err, "model-pull:error");
@@ -269,5 +362,25 @@ mod tests {
     fn pull_registry_cancel_missing_returns_false() {
         let r = PullRegistry::default();
         assert!(!r.cancel("missing"));
+    }
+
+    #[test]
+    fn pull_registry_detects_duplicate() {
+        let r = PullRegistry::default();
+        let t = CancellationToken::new();
+        r.insert("m".to_string(), t);
+        assert!(r.contains("m"));
+        assert!(!r.contains("other"));
+    }
+
+    #[test]
+    fn is_supported_model_accepts_only_hy_mt2() {
+        assert!(is_supported_model(MODEL_HY_MT2_7B));
+        assert!(is_supported_model(MODEL_HY_MT2_1_8B));
+        assert!(!is_supported_model(""));
+        assert!(!is_supported_model("hf.co/some/random:tag"));
+        assert!(!is_supported_model("llama3:8b"));
+        // PRD 모델 이름의 부분 매칭도 거부.
+        assert!(!is_supported_model("Hy-MT2-7B"));
     }
 }
