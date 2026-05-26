@@ -1,6 +1,7 @@
-import { AlertTriangle, RefreshCcw } from 'lucide-react';
+import { AlertTriangle, ExternalLink, RefreshCcw } from 'lucide-react';
 
 import { t } from '@i18n/ko';
+import { invoke } from '@lib/ipc/client';
 import { messageFor, type AppError } from '@lib/ipc/errors';
 
 interface InlineErrorProps {
@@ -12,6 +13,11 @@ interface InlineErrorProps {
 export function InlineError({ error, onRetry, onOpenOllamaDownload }: InlineErrorProps) {
   const showDownload = error.kind === 'OllamaUnavailable';
   const showRetry = onRetry && (error.kind === 'OllamaNotRunning' || error.kind === 'Internal');
+  const showAccessibility = error.kind === 'PermissionRequired';
+
+  const openAccessibility = () => {
+    invoke<void>('open_accessibility_settings').catch(() => undefined);
+  };
 
   return (
     <div
@@ -22,15 +28,26 @@ export function InlineError({ error, onRetry, onOpenOllamaDownload }: InlineErro
         <AlertTriangle className="mt-0.5 size-4 shrink-0" aria-hidden />
         <p className="leading-relaxed">{messageFor(error)}</p>
       </div>
-      {(showDownload || showRetry) && (
+      {(showDownload || showRetry || showAccessibility) && (
         <div className="flex flex-wrap gap-2">
           {showDownload && (
             <button
               type="button"
               onClick={onOpenOllamaDownload}
-              className="rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-900/60"
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-900/60"
             >
+              <ExternalLink className="size-3.5" aria-hidden />
               {t('errors.action.openOllamaDownload')}
+            </button>
+          )}
+          {showAccessibility && (
+            <button
+              type="button"
+              onClick={openAccessibility}
+              className="inline-flex items-center gap-1.5 rounded-md border border-amber-400 bg-white px-3 py-1.5 text-xs font-medium text-amber-900 hover:bg-amber-100 dark:border-amber-600 dark:bg-amber-900/40 dark:text-amber-50 dark:hover:bg-amber-900/60"
+            >
+              <ExternalLink className="size-3.5" aria-hidden />
+              {t('errors.action.openSystemSettings')}
             </button>
           )}
           {showRetry && (

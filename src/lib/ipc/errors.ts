@@ -7,6 +7,8 @@ export type AppError =
   | { kind: 'InputTooLong'; limit: number }
   | { kind: 'Cancelled' }
   | { kind: 'NetworkBlocked' }
+  | { kind: 'PermissionRequired'; feature: string }
+  | { kind: 'InvalidShortcut'; input: string }
   | { kind: 'Internal'; message: string };
 
 export type AppErrorKind = AppError['kind'];
@@ -29,6 +31,10 @@ export function messageFor(error: AppError): string {
       return t('errors.Cancelled');
     case 'NetworkBlocked':
       return t('errors.NetworkBlocked');
+    case 'PermissionRequired':
+      return t('errors.PermissionRequired');
+    case 'InvalidShortcut':
+      return t('errors.InvalidShortcut', { input: error.input });
     case 'Internal':
       return t('errors.Internal');
   }
@@ -55,6 +61,10 @@ export function isAppError(value: unknown): value is AppError {
       return hasStringField(value, 'model');
     case 'InputTooLong':
       return hasNumberField(value, 'limit');
+    case 'PermissionRequired':
+      return hasStringField(value, 'feature');
+    case 'InvalidShortcut':
+      return hasStringField(value, 'input');
     case 'Internal':
       return hasStringField(value, 'message');
     default:

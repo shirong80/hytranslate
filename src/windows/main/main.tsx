@@ -5,6 +5,7 @@ import { SettingsPanel } from '@features/settings/components/settings-panel';
 import { useSettingsStore } from '@features/settings/store';
 import { TranslationPanel } from '@features/translation/components/translation-panel';
 import { useTranslationStore } from '@features/translation/store';
+import { useAutoCopyTranslation } from '@lib/hooks/use-auto-copy-translation';
 import { applyTheme, type ThemeMode } from '@lib/theme';
 
 import '@styles/globals.css';
@@ -19,7 +20,10 @@ function App() {
   const loaded = useSettingsStore((s) => s.loaded);
   const theme = useSettingsStore((s) => s.settings.theme);
   const activeModel = useSettingsStore((s) => s.settings.activeModel);
+  const autoCopy = useSettingsStore((s) => s.settings.autoCopyAfterTranslation);
   const setModel = useTranslationStore((s) => s.setModel);
+
+  useAutoCopyTranslation(autoCopy);
 
   useEffect(() => {
     void load();

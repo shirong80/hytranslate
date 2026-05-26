@@ -36,6 +36,8 @@ export const ko = Object.freeze({
 
   'settings.title': '설정',
   'settings.section.translation': '번역',
+  'settings.section.shortcut': '단축키',
+  'settings.section.system': '시스템',
   'settings.section.appearance': '모양',
   'settings.activeModel.label': '활성 모델',
   'settings.activeModel.hy7b': 'Hy-MT2 7B (권장)',
@@ -43,6 +45,13 @@ export const ko = Object.freeze({
   'settings.ollamaEndpoint.label': 'Ollama endpoint',
   'settings.ollamaEndpoint.help':
     'localhost / 127.0.0.1 만 허용됩니다. 외부 호스트는 저장되지 않습니다.',
+  'settings.globalHotkey.label': '플로팅 팝업 단축키',
+  'settings.globalHotkey.help':
+    '예시: Cmd+Shift+T. 변경 후 즉시 재등록됩니다. macOS 손쉬운 사용 권한이 필요합니다.',
+  'settings.autoCopy.label': '번역 완료 시 결과 자동 복사',
+  'settings.saveHistory.label': '번역 기록 저장',
+  'settings.startAtLogin.label': '로그인 시 자동 시작',
+  'settings.hideDockIcon.label': 'Dock 아이콘 숨기기 (메뉴바 전용 모드)',
   'settings.theme.label': '테마',
   'settings.theme.system': '시스템',
   'settings.theme.light': '라이트',
@@ -50,6 +59,18 @@ export const ko = Object.freeze({
   'settings.action.save': '저장',
   'settings.action.saving': '저장 중…',
   'settings.action.saved': '저장됨',
+
+  'popup.title': '빠른 번역',
+  'popup.input.placeholder': '번역할 텍스트를 입력하세요.',
+  'popup.action.close': '닫기',
+  'popup.action.copy': '복사',
+  'popup.action.copied': '복사됨',
+  'popup.shortcuts.hint': 'Cmd+Enter 번역 · Cmd+C 결과 복사 · Esc 닫기',
+
+  'menubar.input.placeholder': '간단 번역…',
+  'menubar.recent.title': '최근 5건',
+  'menubar.recent.empty': '아직 번역 기록이 없습니다.',
+  'menubar.action.copyClipboard': '클립보드 번역',
 
   'errors.OllamaUnavailable':
     'Ollama가 설치되어 있지 않습니다. HyTranslate Mac은 로컬 번역을 위해 Ollama가 필요합니다.',
@@ -59,9 +80,12 @@ export const ko = Object.freeze({
   'errors.InputTooLong': '현재 화면에서는 최대 {limit}자까지 번역할 수 있습니다.',
   'errors.Cancelled': '번역이 취소되었습니다.',
   'errors.NetworkBlocked': '네트워크 접근이 차단되었습니다.',
+  'errors.PermissionRequired': '전역 단축키를 사용하려면 macOS 손쉬운 사용 권한 설정이 필요합니다.',
+  'errors.InvalidShortcut': '단축키 형식이 올바르지 않습니다: {input}',
   'errors.Internal': '번역 중 문제가 발생했습니다. Ollama 상태를 확인한 뒤 다시 시도해 주세요.',
   'errors.action.retry': '다시 시도',
   'errors.action.openOllamaDownload': 'Ollama 공식 다운로드',
+  'errors.action.openSystemSettings': '시스템 설정 열기',
 } as const);
 
 export type I18nKey = keyof typeof ko;

@@ -2,7 +2,13 @@ import { create } from 'zustand';
 
 import type { AppError } from '@lib/ipc/errors';
 
-import { type SourceLanguage, type TranslationStatus, DEFAULT_MODEL } from './types';
+import {
+  type RecentTranslation,
+  type SourceLanguage,
+  type TranslationStatus,
+  DEFAULT_MODEL,
+  RECENT_LIMIT,
+} from './types';
 
 export interface TranslationState {
   sourceText: string;
@@ -14,6 +20,8 @@ export interface TranslationState {
   requestId: string | null;
   startedAtMs: number | null;
   durationMs: number | null;
+  /** in-memory recent translations; Phase 4 에서 SQLite + FTS5 로 대체된다. */
+  recent: RecentTranslation[];
 }
 
 export interface TranslationActions {
@@ -48,6 +56,7 @@ const initialState: TranslationState = {
   requestId: null,
   startedAtMs: null,
   durationMs: null,
+  recent: [],
 };
 
 export const useTranslationStore = create<TranslationState & TranslationActions>()((set, get) => ({
@@ -88,11 +97,26 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
 
   markCompleted: ({ requestId, fullText, durationMs }) => {
     if (get().requestId !== requestId) return;
+    const { sourceText, sourceLanguage, recent } = get();
+    const entry: RecentTranslation = {
+      requestId,
+      sourceText,
+      fullText,
+      sourceLanguage,
+      durationMs,
+      completedAtMs: Date.now(),
+    };
+    // 새 항목이 가장 앞. RECENT_LIMIT 개 까지만 유지.
+    const nextRecent = [entry, ...recent.filter((r) => r.requestId !== requestId)].slice(
+      0,
+      RECENT_LIMIT,
+    );
     set({
       output: fullText,
       durationMs,
       status: 'completed',
       error: null,
+      recent: nextRecent,
     });
   },
 

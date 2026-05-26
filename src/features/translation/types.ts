@@ -16,8 +16,21 @@ export type TranslationStatus =
   | 'error';
 
 export const MAIN_INPUT_LIMIT = 30_000;
+export const POPUP_INPUT_LIMIT = 5_000;
+export const MENUBAR_INPUT_LIMIT = 5_000;
 
 export const DEFAULT_MODEL = 'hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M';
+
+export interface RecentTranslation {
+  requestId: string;
+  sourceText: string;
+  fullText: string;
+  sourceLanguage: SourceLanguage;
+  durationMs: number;
+  completedAtMs: number;
+}
+
+export const RECENT_LIMIT = 5;
 
 export interface TranslateRequest {
   sourceText: string;

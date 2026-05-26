@@ -10,3 +10,8 @@ pub const MODEL_PULL_STARTED: &str = "model-pull:started";
 pub const MODEL_PULL_PROGRESS: &str = "model-pull:progress";
 pub const MODEL_PULL_COMPLETED: &str = "model-pull:completed";
 pub const MODEL_PULL_ERROR: &str = "model-pull:error";
+
+pub const POPUP_OPENED: &str = "popup:opened";
+pub const POPUP_CLOSED: &str = "popup:closed";
+pub const MENUBAR_OPENED: &str = "menubar:opened";
+pub const MENUBAR_CLOSED: &str = "menubar:closed";

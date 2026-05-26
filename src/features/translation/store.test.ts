@@ -96,6 +96,40 @@ describe('translation store', () => {
     expect(state.output).toBe('');
   });
 
+  it('markCompleted records translation into recent[] (newest first)', () => {
+    const store = useTranslationStore.getState();
+    store.setSourceText('첫번째');
+    store.beginRequest('req-1');
+    store.markCompleted({ requestId: 'req-1', fullText: 'first', durationMs: 100 });
+    store.setSourceText('두번째');
+    store.beginRequest('req-2');
+    store.markCompleted({ requestId: 'req-2', fullText: 'second', durationMs: 120 });
+
+    const recent = useTranslationStore.getState().recent;
+    expect(recent).toHaveLength(2);
+    expect(recent[0]?.requestId).toBe('req-2');
+    expect(recent[0]?.fullText).toBe('second');
+    expect(recent[1]?.requestId).toBe('req-1');
+  });
+
+  it('recent[] is capped at RECENT_LIMIT', () => {
+    const store = useTranslationStore.getState();
+    for (let i = 0; i < 7; i++) {
+      store.beginRequest(`req-${i}`);
+      store.markCompleted({
+        requestId: `req-${i}`,
+        fullText: `translation-${i}`,
+        durationMs: 50,
+      });
+    }
+    const recent = useTranslationStore.getState().recent;
+    expect(recent).toHaveLength(5);
+    // 최신순 — 마지막에 들어간 req-6 이 첫 항목.
+    expect(recent[0]?.requestId).toBe('req-6');
+    // 가장 오래된 5번째 — req-2 (req-0, req-1 은 evict).
+    expect(recent[4]?.requestId).toBe('req-2');
+  });
+
   it('setIdle returns store to idle and clears output/request/error', () => {
     const store = useTranslationStore.getState();
     store.beginRequest('req-Y');

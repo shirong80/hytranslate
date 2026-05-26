@@ -85,6 +85,52 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
               {t('settings.ollamaEndpoint.help')}
             </p>
           </Field>
+
+          <Toggle
+            id="auto-copy"
+            label={t('settings.autoCopy.label')}
+            checked={draft.autoCopyAfterTranslation}
+            onChange={(v) => setDraft({ ...draft, autoCopyAfterTranslation: v })}
+          />
+          <Toggle
+            id="save-history"
+            label={t('settings.saveHistory.label')}
+            checked={draft.saveHistory}
+            onChange={(v) => setDraft({ ...draft, saveHistory: v })}
+          />
+        </Section>
+
+        <Section title={t('settings.section.shortcut')}>
+          <Field label={t('settings.globalHotkey.label')} htmlFor="global-hotkey">
+            <input
+              id="global-hotkey"
+              type="text"
+              value={draft.globalHotkey}
+              onChange={(e) => setDraft({ ...draft, globalHotkey: e.target.value })}
+              spellCheck={false}
+              autoComplete="off"
+              placeholder="Cmd+Shift+T"
+              className="w-full rounded-md border border-neutral-300 bg-white px-3 py-1.5 font-mono text-xs text-neutral-900 focus:border-brand focus:outline-none focus:ring-1 focus:ring-brand dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-100"
+            />
+            <p className="text-xs text-neutral-500 dark:text-neutral-500">
+              {t('settings.globalHotkey.help')}
+            </p>
+          </Field>
+        </Section>
+
+        <Section title={t('settings.section.system')}>
+          <Toggle
+            id="start-at-login"
+            label={t('settings.startAtLogin.label')}
+            checked={draft.startAtLogin}
+            onChange={(v) => setDraft({ ...draft, startAtLogin: v })}
+          />
+          <Toggle
+            id="hide-dock-icon"
+            label={t('settings.hideDockIcon.label')}
+            checked={draft.hideDockIcon}
+            onChange={(v) => setDraft({ ...draft, hideDockIcon: v })}
+          />
         </Section>
 
         <Section title={t('settings.section.appearance')}>
@@ -157,5 +203,33 @@ function Field({
       </label>
       {children}
     </div>
+  );
+}
+
+function Toggle({
+  id,
+  label,
+  checked,
+  onChange,
+}: {
+  id: string;
+  label: string;
+  checked: boolean;
+  onChange: (value: boolean) => void;
+}) {
+  return (
+    <label
+      htmlFor={id}
+      className="flex cursor-pointer items-center justify-between gap-3 text-xs text-neutral-700 dark:text-neutral-300"
+    >
+      <span>{label}</span>
+      <input
+        id={id}
+        type="checkbox"
+        checked={checked}
+        onChange={(e) => onChange(e.target.checked)}
+        className="size-4 cursor-pointer accent-brand"
+      />
+    </label>
   );
 }

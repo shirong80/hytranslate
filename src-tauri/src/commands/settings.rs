@@ -1,13 +1,15 @@
-//! Phase 2: `get_settings` / `update_settings` 명령 (PRD §10, §9.2).
+//! `get_settings` / `update_settings` (PRD §10, §9.2).
 //!
-//! 영속화는 `crate::settings::SettingsStore` 가 담당. 커맨드 레이어는
-//! `Arc<SettingsStore>` 를 state 로 받아 forward 만 한다.
+//! 영속화는 `SettingsStore` 가 담당. 커맨드 레이어는 검증 + diff 기반 system reconcile.
+//! Phase 3 부터 단축키 / dock / autostart 변경 시 즉시 system 상태에 반영한다.
 
 use std::sync::Arc;
 
+use crate::commands::system;
 use crate::errors::{AppError, AppResult};
 use crate::ollama::is_endpoint_allowed;
 use crate::settings::{Settings, SettingsStore};
+use crate::shortcuts;
 
 #[tauri::command]
 pub async fn get_settings(store: tauri::State<'_, Arc<SettingsStore>>) -> AppResult<Settings> {
@@ -15,7 +17,8 @@ pub async fn get_settings(store: tauri::State<'_, Arc<SettingsStore>>) -> AppRes
 }
 
 #[tauri::command]
-pub async fn update_settings(
+pub async fn update_settings<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
     store: tauri::State<'_, Arc<SettingsStore>>,
     settings: Settings,
 ) -> AppResult<Settings> {
@@ -24,7 +27,24 @@ pub async fn update_settings(
     if !is_endpoint_allowed(&settings.ollama_endpoint) {
         return Err(AppError::NetworkBlocked);
     }
-    store.update(settings)
+    // 단축키 형식이 잘못된 경우 disk 에 쓰기 전에 빠르게 거부 — 재등록 단계에서
+    // 실패해 단축키 없음 상태가 되는 것을 막는다.
+    let _ = shortcuts::parser::parse(&settings.global_hotkey)?;
+
+    let prev = store.get();
+    let saved = store.update(settings)?;
+
+    if prev.global_hotkey != saved.global_hotkey {
+        shortcuts::reconcile(&app, &saved.global_hotkey)?;
+    }
+    if prev.hide_dock_icon != saved.hide_dock_icon {
+        system::apply_dock_hidden(&app, saved.hide_dock_icon)?;
+    }
+    if prev.start_at_login != saved.start_at_login {
+        system::apply_autostart(&app, saved.start_at_login)?;
+    }
+
+    Ok(saved)
 }
 
 #[cfg(test)]

@@ -14,10 +14,13 @@ function generateRequestId(): string {
 
 interface UseTranslationControllerOptions {
   debounceMs?: number;
+  /** 입력 cap. 메인=30k(MAIN_INPUT_LIMIT), 팝업/메뉴바=5k(POPUP_INPUT_LIMIT). */
+  inputLimit?: number;
 }
 
 export function useTranslationController(options: UseTranslationControllerOptions = {}) {
   const debounceMs = options.debounceMs ?? DEBOUNCE_MS;
+  const inputLimit = options.inputLimit ?? MAIN_INPUT_LIMIT;
 
   const sourceText = useTranslationStore((s) => s.sourceText);
   const sourceLanguage = useTranslationStore((s) => s.sourceLanguage);
@@ -90,9 +93,9 @@ export function useTranslationController(options: UseTranslationControllerOption
     }
     // 길이 초과는 client-side 검증. in-flight 요청을 먼저 취소하여 stale chunk가
     // 새 상태에 누적되지 않게 한다.
-    if ([...text].length > MAIN_INPUT_LIMIT) {
+    if ([...text].length > inputLimit) {
       await cancelInFlight();
-      setLocalError({ kind: 'InputTooLong', limit: MAIN_INPUT_LIMIT });
+      setLocalError({ kind: 'InputTooLong', limit: inputLimit });
       return;
     }
 
@@ -120,7 +123,7 @@ export function useTranslationController(options: UseTranslationControllerOption
       }
       if (inFlightRef.current === newId) inFlightRef.current = null;
     }
-  }, [beginRequest, cancelInFlight, markError, setIdle, setLocalError]);
+  }, [beginRequest, cancelInFlight, inputLimit, markError, setIdle, setLocalError]);
 
   useEffect(() => {
     if (debounceTimer.current) {

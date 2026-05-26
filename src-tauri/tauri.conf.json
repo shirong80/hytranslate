@@ -29,23 +29,29 @@
         "url": "src/windows/popup/index.html",
         "title": "HyTranslate Popup",
         "width": 480,
-        "height": 320,
+        "height": 360,
+        "minWidth": 480,
+        "minHeight": 220,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "visible": false
+        "visible": false,
+        "shadow": true
       },
       {
         "label": "menubar",
         "url": "src/windows/menubar/index.html",
         "title": "HyTranslate Menubar",
         "width": 320,
-        "height": 400,
+        "height": 480,
         "decorations": false,
+        "transparent": true,
+        "alwaysOnTop": true,
         "resizable": false,
         "skipTaskbar": true,
-        "visible": false
+        "visible": false,
+        "shadow": true
       }
     ],
     "security": {

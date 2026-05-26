@@ -24,6 +24,12 @@ pub enum AppError {
     #[error("network access blocked")]
     NetworkBlocked,
 
+    #[error("macOS permission required for feature: {feature}")]
+    PermissionRequired { feature: String },
+
+    #[error("invalid shortcut accelerator: {input}")]
+    InvalidShortcut { input: String },
+
     #[error("internal error: {message}")]
     Internal { message: String },
 }
