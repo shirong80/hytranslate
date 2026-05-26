@@ -1,14 +1,19 @@
 import { createRoot } from 'react-dom/client';
 
+import { TranslationPanel } from '@features/translation/components/translation-panel';
+import { applyTheme } from '@lib/theme';
+
 import '@styles/globals.css';
 
 function App() {
   return (
-    <main className="flex h-screen items-center justify-center bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
-      <h1 className="text-2xl font-medium tracking-tight">HyTranslate Mac</h1>
+    <main className="h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
+      <TranslationPanel />
     </main>
   );
 }
+
+applyTheme('system');
 
 const root = document.getElementById('root');
 if (!root) {

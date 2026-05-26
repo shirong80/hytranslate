@@ -3,7 +3,7 @@ use thiserror::Error;
 
 /// 공개 에러 — `#[tauri::command]` 가 반환하는 직렬화 shape.
 /// FE 의 `src/lib/ipc/errors.ts` 와 1:1 mirror. variant 변경은 양쪽 동시 적용.
-#[derive(Debug, Error, Serialize)]
+#[derive(Debug, Clone, Error, Serialize)]
 #[serde(tag = "kind")]
 pub enum AppError {
     #[error("Ollama is not available")]
@@ -30,8 +30,26 @@ pub enum AppError {
 
 impl AppError {
     /// 내부 에러 메시지를 `AppError::Internal` 로 감싸는 헬퍼.
-    /// Phase 1 진입 시 `From<reqwest::Error>` / `From<rusqlite::Error>` 를 추가하여 확장한다.
     pub fn internal<E: std::fmt::Display>(err: E) -> Self {
+        AppError::Internal {
+            message: err.to_string(),
+        }
+    }
+}
+
+impl From<reqwest::Error> for AppError {
+    fn from(err: reqwest::Error) -> Self {
+        // Connect / DNS 실패는 Ollama 미실행으로 간주. 그 외는 Internal 로 폴백.
+        // 원문 / 번역 결과는 절대 로그에 남기지 않는다.
+        if err.is_connect() || err.is_timeout() {
+            tracing::warn!(error.kind = %"OllamaNotRunning", "ollama endpoint not reachable");
+            return AppError::OllamaNotRunning;
+        }
+        if err.is_request() {
+            return AppError::Internal {
+                message: format!("ollama request error: {err}"),
+            };
+        }
         AppError::Internal {
             message: err.to_string(),
         }
