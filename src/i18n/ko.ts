@@ -111,6 +111,74 @@ export const ko = Object.freeze({
   'errors.action.retry': '다시 시도',
   'errors.action.openOllamaDownload': 'Ollama 공식 다운로드',
   'errors.action.openSystemSettings': '시스템 설정 열기',
+
+  'onboarding.title': '시작 준비',
+  'onboarding.step.welcome': '환영',
+  'onboarding.step.environment': '환경',
+  'onboarding.step.ollama': 'Ollama',
+  'onboarding.step.model': '모델',
+  'onboarding.step.permissions': '권한',
+  'onboarding.step.history': '이력',
+  'onboarding.step.done': '완료',
+  'onboarding.action.continue': '계속',
+  'onboarding.action.back': '이전',
+  'onboarding.action.recheck': '다시 확인',
+  'onboarding.action.cancel': '취소',
+  'onboarding.action.finish': '시작하기',
+  'onboarding.action.finishing': '저장 중…',
+
+  'onboarding.welcome.title': 'HyTranslate Mac에 오신 것을 환영합니다',
+  'onboarding.welcome.description':
+    'Tencent Hy-MT2 모델을 이 Mac에서 직접 실행해 한국어와 중국어를 영어로 번역합니다.',
+  'onboarding.welcome.start': '시작',
+  'onboarding.welcome.bullet.local': '번역 중 원문은 이 Mac 밖으로 전송되지 않습니다.',
+  'onboarding.welcome.bullet.offline': '모델 다운로드 이후 네트워크 없이 동작합니다.',
+  'onboarding.welcome.bullet.history':
+    '번역 이력은 이 Mac에만 저장되며, 언제든 끄거나 삭제할 수 있습니다.',
+
+  'onboarding.environment.title': '환경 확인',
+  'onboarding.environment.description': '시스템 사양을 확인해 추천 모델을 결정합니다.',
+  'onboarding.environment.checking': '환경을 확인하는 중…',
+  'onboarding.environment.macos': 'macOS 버전',
+  'onboarding.environment.macosUnsupported': 'macOS 13 이상이 필요합니다.',
+  'onboarding.environment.arch': '아키텍처',
+  'onboarding.environment.arch.appleSilicon': 'Apple Silicon',
+  'onboarding.environment.arch.intel': 'Intel',
+  'onboarding.environment.arch.unknown': '알 수 없음',
+  'onboarding.environment.intelWarning': 'Intel Mac에서는 번역 속도가 느릴 수 있습니다.',
+  'onboarding.environment.memory': '메모리',
+  'onboarding.environment.lowMemory': '12 GB 미만 — 1.8B 모델을 권장합니다.',
+
+  'onboarding.ollama.title': 'Ollama 준비',
+  'onboarding.ollama.description': 'Ollama가 로컬에서 실행 중인지 확인합니다.',
+  'onboarding.ollama.running': 'Ollama가 실행 중입니다.',
+  'onboarding.ollama.notRunning':
+    'Ollama가 실행되어 있지 않습니다. 공식 다운로드 후 실행해 주세요.',
+  'onboarding.ollama.openDownload': '공식 다운로드 열기',
+
+  'onboarding.model.title': '모델 다운로드',
+  'onboarding.model.description': '추천 모델을 그대로 진행하거나 다른 모델을 선택할 수 있습니다.',
+  'onboarding.model.choose': '모델 선택',
+  'onboarding.model.recommended': '추천',
+  'onboarding.model.installed': '설치됨',
+  'onboarding.model.alreadyInstalled': '선택한 모델이 이미 설치되어 있습니다.',
+  'onboarding.model.startPull': '선택한 모델 다운로드',
+  'onboarding.model.pulling': '{model} 다운로드 중…',
+  'onboarding.model.hy7b.label': 'Hy-MT2 7B',
+  'onboarding.model.hy7b.sub': '약 4 GB · 권장 사양 12 GB RAM 이상',
+  'onboarding.model.hy1_8b.label': 'Hy-MT2 1.8B',
+  'onboarding.model.hy1_8b.sub': '약 1 GB · 저메모리 환경용 (8 GB RAM 이상)',
+
+  'onboarding.permissions.title': '권한 안내',
+  'onboarding.permissions.description':
+    '플로팅 팝업과 전역 단축키를 사용하려면 macOS 손쉬운 사용 권한이 필요합니다.',
+  'onboarding.permissions.accessibility':
+    'Cmd+Shift+T 등 전역 단축키 등록을 위해 시스템 설정 → 손쉬운 사용에서 HyTranslate Mac을 허용해 주세요.',
+  'onboarding.permissions.note': '나중에 설정 화면의 안내에서 다시 요청할 수 있습니다.',
+
+  'onboarding.history.title': '이력 저장 안내',
+  'onboarding.history.description':
+    '기본적으로 번역 이력은 이 Mac에만 저장됩니다. 언제든 설정에서 끄거나 전체 삭제할 수 있습니다.',
 } as const);
 
 export type I18nKey = keyof typeof ko;

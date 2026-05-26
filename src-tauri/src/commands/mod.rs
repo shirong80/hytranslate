@@ -17,11 +17,13 @@ use crate::{menubar, shortcuts};
 
 pub mod detect;
 pub mod history;
+pub mod onboarding;
 pub mod popup;
 pub mod settings;
 pub mod system;
 pub mod translate;
 
+pub use onboarding::PullRegistry;
 pub use translate::TranslationRegistry;
 
 const OLLAMA_DOWNLOAD_URL: &str = "https://ollama.com/download";
@@ -50,6 +52,7 @@ async fn open_accessibility_settings() -> AppResult<()> {
 
 pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
     let registry = Arc::new(TranslationRegistry::default());
+    let pull_registry = Arc::new(PullRegistry::default());
 
     builder
         .plugin(tauri_plugin_clipboard_manager::init())
@@ -59,6 +62,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
         ))
         .plugin(tauri_plugin_dialog::init())
         .manage(registry)
+        .manage(pull_registry)
         .setup(|app| {
             // Settings 영속화 위치: app_data_dir/settings.json
             // macOS 에서는 ~/Library/Application Support/<bundle id>/settings.json 으로 매핑.
@@ -131,5 +135,10 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             history::set_tags,
             history::export_history_csv,
             history::export_history_json,
+            onboarding::detect_environment,
+            onboarding::get_ollama_status,
+            onboarding::pull_model,
+            onboarding::cancel_model_pull,
+            onboarding::complete_onboarding,
         ])
 }

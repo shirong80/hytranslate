@@ -1,6 +1,10 @@
-//! Ollama HTTP streaming client (`POST /api/generate`, `stream: true`).
+//! Ollama HTTP streaming client.
 //!
-//! 핵심 책임:
+//! - `POST /api/generate` (stream): translation.
+//! - `GET /api/tags`: list locally installed models — onboarding & status.
+//! - `POST /api/pull` (stream): model download with progress.
+//!
+//! 공통:
 //! - chunked NDJSON 응답을 한 줄씩 파싱한다.
 //! - UTF-8 partial codepoint 가 chunk 경계를 넘어가도 깨진 문자를 emit 하지 않는다.
 //! - 취소 토큰을 chunk 사이마다 확인한다.
@@ -19,6 +23,8 @@ use crate::ollama::endpoint::is_endpoint_allowed;
 use crate::ollama::prompt::{build_prompt, num_predict_for};
 
 const GENERATE_PATH: &str = "/api/generate";
+const TAGS_PATH: &str = "/api/tags";
+const PULL_PATH: &str = "/api/pull";
 
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
@@ -46,6 +52,44 @@ struct GenerateChunk {
     response: String,
     #[serde(default)]
     done: bool,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagsResponse {
+    #[serde(default)]
+    models: Vec<TagsModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TagsModel {
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct PullRequest<'a> {
+    model: &'a str,
+    stream: bool,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+pub struct PullChunk {
+    #[serde(default)]
+    pub status: String,
+    #[serde(default)]
+    pub digest: Option<String>,
+    #[serde(default)]
+    pub total: Option<u64>,
+    #[serde(default)]
+    pub completed: Option<u64>,
+    #[serde(default)]
+    pub error: Option<String>,
+}
+
+impl PullChunk {
+    pub fn is_terminal_success(&self) -> bool {
+        // Ollama 는 마지막 chunk 로 `{"status": "success"}` 를 emit 한다.
+        self.status.eq_ignore_ascii_case("success")
+    }
 }
 
 /// chunk callback 결과. `Stop` 이면 worker 는 더 이상 chunk 를 emit 하지 않는다.
@@ -154,6 +198,78 @@ impl OllamaClient {
             } else {
                 "ollama stream ended with trailing partial line".to_string()
             },
+        })
+    }
+
+    /// `GET /api/tags` — 로컬에 설치된 모델 목록. Ollama 미실행 시 `OllamaNotRunning`.
+    pub async fn list_models(&self, base_url: &str) -> AppResult<Vec<String>> {
+        if !is_endpoint_allowed(base_url) {
+            return Err(AppError::NetworkBlocked);
+        }
+        let url = format!("{}{}", base_url.trim_end_matches('/'), TAGS_PATH);
+        let response = self.http.get(&url).send().await.map_err(AppError::from)?;
+        let response = response.error_for_status().map_err(AppError::from)?;
+        let body: TagsResponse = response.json().await.map_err(AppError::from)?;
+        Ok(body.models.into_iter().map(|m| m.name).collect())
+    }
+
+    /// `POST /api/pull` (stream). `on_chunk` 는 progress 단위로 호출된다.
+    /// 정상 종료 시 `Ok(())` — 마지막 chunk 의 `status: "success"` 이후.
+    /// Ollama 가 `error` 필드 비어있지 않은 chunk 를 보내면 즉시 `Internal` 로 반환.
+    pub async fn pull_model_stream<F>(
+        &self,
+        base_url: &str,
+        model: &str,
+        cancel: &CancellationToken,
+        mut on_chunk: F,
+    ) -> AppResult<()>
+    where
+        F: FnMut(&PullChunk) -> ChunkFlow,
+    {
+        if !is_endpoint_allowed(base_url) {
+            return Err(AppError::NetworkBlocked);
+        }
+        let body = PullRequest {
+            model,
+            stream: true,
+        };
+        let url = format!("{}{}", base_url.trim_end_matches('/'), PULL_PATH);
+        let response = tokio::select! {
+            _ = cancel.cancelled() => return Err(AppError::Cancelled),
+            res = self.http.post(&url).json(&body).send() => res.map_err(AppError::from)?,
+        };
+        let response = response.error_for_status().map_err(AppError::from)?;
+        let mut stream = response.bytes_stream();
+        let mut line_buf = LineBuffer::new();
+
+        loop {
+            tokio::select! {
+                biased;
+                _ = cancel.cancelled() => return Err(AppError::Cancelled),
+                next = stream.next() => {
+                    let Some(item) = next else { break };
+                    let bytes: Bytes = item.map_err(AppError::from)?;
+                    line_buf.feed(&bytes);
+                    while let Some(line) = line_buf.next_line() {
+                        if line.is_empty() { continue; }
+                        let chunk: PullChunk = serde_json::from_str(&line)
+                            .map_err(|e| AppError::internal(format!("ollama pull parse: {e}")))?;
+                        if let Some(err) = &chunk.error {
+                            return Err(AppError::internal(format!("ollama pull error: {err}")));
+                        }
+                        let terminal = chunk.is_terminal_success();
+                        if matches!(on_chunk(&chunk), ChunkFlow::Stop) {
+                            return Err(AppError::Cancelled);
+                        }
+                        if terminal {
+                            return Ok(());
+                        }
+                    }
+                }
+            }
+        }
+        Err(AppError::Internal {
+            message: "ollama pull stream ended before success".to_string(),
         })
     }
 }
@@ -392,6 +508,135 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(AppError::NetworkBlocked)));
+    }
+
+    #[tokio::test]
+    async fn list_models_returns_names_in_order() {
+        let server = MockServer::start().await;
+        let body = r#"{"models":[{"name":"hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M","size":4000000000},{"name":"llama3:8b","size":5000000000}]}"#;
+        Mock::given(method("GET"))
+            .and(path(TAGS_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/json"))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::new().unwrap();
+        let models = client.list_models(&server.uri()).await.unwrap();
+        assert_eq!(
+            models,
+            vec![
+                "hf.co/tencent/Hy-MT2-7B-GGUF:Q4_K_M".to_string(),
+                "llama3:8b".into(),
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn list_models_empty_response_returns_empty_vec() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path(TAGS_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw("{}", "application/json"))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::new().unwrap();
+        let models = client.list_models(&server.uri()).await.unwrap();
+        assert!(models.is_empty());
+    }
+
+    #[tokio::test]
+    async fn list_models_rejects_non_loopback() {
+        let client = OllamaClient::new().unwrap();
+        let result = client.list_models("http://example.com:11434").await;
+        assert!(matches!(result, Err(AppError::NetworkBlocked)));
+    }
+
+    fn pull_ndjson_success() -> String {
+        let lines = [
+            r#"{"status":"pulling manifest"}"#,
+            r#"{"status":"downloading","digest":"sha256:abc","total":1000,"completed":100}"#,
+            r#"{"status":"downloading","digest":"sha256:abc","total":1000,"completed":500}"#,
+            r#"{"status":"downloading","digest":"sha256:abc","total":1000,"completed":1000}"#,
+            r#"{"status":"verifying sha256 digest"}"#,
+            r#"{"status":"success"}"#,
+        ];
+        let mut buf = String::new();
+        for l in lines {
+            buf.push_str(l);
+            buf.push('\n');
+        }
+        buf
+    }
+
+    #[tokio::test]
+    async fn pull_model_stream_emits_progress_and_succeeds() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PULL_PATH))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(pull_ndjson_success(), "application/x-ndjson"),
+            )
+            .mount(&server)
+            .await;
+        let client = OllamaClient::new().unwrap();
+        let cancel = CancellationToken::new();
+        let mut statuses: Vec<String> = Vec::new();
+        let mut completions: Vec<u64> = Vec::new();
+        client
+            .pull_model_stream(&server.uri(), "test-model", &cancel, |chunk| {
+                statuses.push(chunk.status.clone());
+                if let Some(c) = chunk.completed {
+                    completions.push(c);
+                }
+                ChunkFlow::Continue
+            })
+            .await
+            .unwrap();
+        assert_eq!(statuses.first().unwrap(), "pulling manifest");
+        assert_eq!(statuses.last().unwrap(), "success");
+        assert_eq!(completions, vec![100, 500, 1000]);
+    }
+
+    #[tokio::test]
+    async fn pull_model_stream_propagates_error_chunk() {
+        let server = MockServer::start().await;
+        let body = "{\"error\":\"pull model manifest: file does not exist\"}\n".to_string();
+        Mock::given(method("POST"))
+            .and(path(PULL_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/x-ndjson"))
+            .mount(&server)
+            .await;
+        let client = OllamaClient::new().unwrap();
+        let cancel = CancellationToken::new();
+        let result = client
+            .pull_model_stream(&server.uri(), "ghost-model", &cancel, |_| {
+                ChunkFlow::Continue
+            })
+            .await;
+        assert!(matches!(result, Err(AppError::Internal { .. })));
+    }
+
+    #[tokio::test]
+    async fn pull_model_stream_cancellable() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(PULL_PATH))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(pull_ndjson_success(), "application/x-ndjson"),
+            )
+            .mount(&server)
+            .await;
+        let client = OllamaClient::new().unwrap();
+        let cancel = CancellationToken::new();
+        let token_cb = cancel.clone();
+        let result = client
+            .pull_model_stream(&server.uri(), "m", &cancel, move |_| {
+                token_cb.cancel();
+                ChunkFlow::Stop
+            })
+            .await;
+        assert!(matches!(result, Err(AppError::Cancelled)));
     }
 
     #[test]
