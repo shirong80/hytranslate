@@ -1,7 +1,9 @@
 # HyTranslate Mac — 초기 셋업 계획서
 
-> **상태**: 리뷰 v3 반영 완료 — 사용자 승인 후 코드 진행
-> **리뷰 출처**: `docs/review/00-initial-setup-review.md` (v1: High 1 / Medium 3 / Low 2 → 모두 반영. v2: Medium 1 — plugin/capability 범위 충돌 → 반영)
+> **상태**: 리뷰 v4 반영 완료 — 사용자 승인 후 코드 진행
+> **리뷰 출처**:
+> - `docs/review/00-initial-setup-review.md` (계획서 검토) — v1: High 1 / Medium 3 / Low 2 → 모두 반영. v2: Medium 1 → 반영 후 v3 에서 supersede
+> - `docs/review/00-initial-setup-code-review.md` (산출물 코드리뷰) — v3 (구판): High 1 / Medium 2 / Low 2 → 모두 반영. v4 (현행): Medium 1 (shell-plugin 잔재 정리) → 반영
 > **참조**: `docs/hytranslate-mac-prd.md` (Source of Truth), `.claude/CLAUDE.md`, `.claude/rules/*`
 > **범위 정의**: 본 문서가 다루는 "초기 셋업"은 **Phase 1 기능 구현 직전까지의 인프라**를 가리킨다. Tauri 2 scaffold, 빌드 시스템, 디렉터리 구조, dev tooling, 설정 파일, 스켈레톤 진입점을 포함하며 **번역 기능 코드는 포함하지 않는다**.
 
@@ -116,9 +118,9 @@ hytranslate/
 - `npm create tauri-app@latest` 가 아닌 **수동 셋업** 권장. 이유:
   - PRD 가 path alias, 멀티 윈도우, 한국어 UI, 외부 capability allowlist 등 디폴트와 다른 결정을 이미 가지고 있음
   - 수동 셋업으로 의도된 의존성만 깔끔히 들어간다
-- **초기 셋업 의존성** (리뷰 v3 #1 반영 — Step 6 의 "초기 최소" 정책과 1:1 일치):
+- **초기 셋업 의존성** (리뷰 v4 Medium 1 반영 — shell plugin 제거 후 단일 정책):
   - `@tauri-apps/cli` (devDep), `@tauri-apps/api` (dep)
-  - Tauri plugins: **`tauri-plugin-shell` 만** (Ollama 설치 페이지 열기용)
+  - Tauri plugins: **추가 plugin 없음**. 외부 URL 열기는 백엔드 Rust command (`open_ollama_download_page`) 가 `std::process::Command::new("open")` 으로 처리 (리뷰 v3 High 1, §4 잠금 결정 "외부 URL 열기" 참조)
   - `tauri-plugin-global-shortcut`, `tauri-plugin-clipboard-manager`, `tauri-plugin-fs`, `tauri-plugin-autostart` 는 **Step 6 의 "Phase 진입 시 추가 예정" 표대로 Phase 3/4 진입 시 추가**한다. 본 셋업에는 포함하지 않음
   - **주의**: 정확한 버전은 `library-docs-fetcher` 로 Tauri 2 최신 plugin 매트릭스를 한 번 더 확인한 뒤 확정
 - `src-tauri/tauri.conf.json` (Tauri 2 표준 위치. `.claude/CLAUDE.md` 의 구조 예시가 루트 경로를 보여주는 것은 후속 문서 정리 대상으로 §10에 기록):
@@ -130,8 +132,8 @@ hytranslate/
     - **prod CSP** (`build.csp`): `default-src 'self'; connect-src 'self' http://localhost:11434 ipc: http://ipc.localhost; script-src 'self'; style-src 'self' 'unsafe-inline'` — `.claude/rules/security.md` 의 localhost-only 원칙 그대로
     - **dev CSP** (`build.devCsp` 또는 dev 빌드 분기): prod 셋에 더해 `connect-src` 에 `ws://localhost:1420 http://localhost:1420` 추가 — Vite HMR websocket 허용
     - `'unsafe-inline'` 은 style 에만 한정. script 는 dev/prod 모두 거부
-  - **capabilities (리뷰 v3 #1 반영 — plugin 설치 범위와 1:1 일치)**:
-    - 초기 셋업에는 **`shell.open` 만** 열어둔다 (Ollama 공식 설치 페이지 링크 용)
+  - **capabilities (리뷰 v4 Medium 1 반영 — shell capability 제거 후 단일 정책)**:
+    - 초기 셋업에는 **`core:default` 만** 부여한다. 외부 URL 열기는 FE 에 `shell.open` 권한을 부여하지 않고 백엔드 Rust command 가 고정 URL 만 열도록 처리한다 (리뷰 v3 High 1)
     - `fs` (app-data 스코프), `clipboard-manager`, `global-shortcut` capability 는 해당 plugin crate 가 Cargo 에 들어가는 **Phase 3/4 진입 시 동시에 추가**한다 (capability 만 열고 plugin 이 없으면 런타임 설정 불일치 발생)
   - `windows`: `main`, `popup`, `menubar` 3개를 미리 정의하되 `popup` / `menubar` 는 `visible: false` 로 시작
 
@@ -202,8 +204,8 @@ hytranslate/
 
     | crate | 용도 | 근거 |
     |---|---|---|
-    | `tauri@^2` (default macOS features) | 앱 진입점 / 윈도우 등록 | `.claude/CLAUDE.md` Tech Stack |
-    | `tauri-plugin-shell` | Ollama 설치 페이지 열기 (`shell.open` capability) | `.claude/rules/security.md` |
+    | `tauri@^2` (`macos-private-api` feature) | 앱 진입점 / 윈도우 등록 + 투명 popup 등 macOS 전용 효과 | `.claude/CLAUDE.md` Tech Stack, §4 잠금 결정 "macOS private API" |
+    | `tauri-build@^2` | `build.rs` Tauri 빌드 스크립트 | Tauri 2 필수 build-dep (계획서 v4 보강) |
     | `tokio` (`rt-multi-thread`, `macros`, `sync`) | 모든 `#[tauri::command]` 가 async | `.claude/rules/rust-style.md` Async/Tokio |
     | `serde`, `serde_json` | 모든 IPC 페이로드 | tauri-ipc 규칙 |
     | `thiserror` | `AppError` derive | `.claude/rules/rust-style.md` Error handling |
@@ -302,6 +304,10 @@ hytranslate/
 | productName | **`HyTranslate Mac`** (인터뷰 확정) |
 | 코드 서명 | **dev 빌드만, 서명/notarization 미설정** (v1 배포 직전 별도 작업) |
 | Playwright 범위 | **config + 빈 sanity spec 1개만**. `tauri-driver` 연결은 Phase 1 후반에 켬 |
+| 배포 채널 | **DMG 직접 배포 only**. App Store 배포는 현재 범위 외 (리뷰 v3 Low 1) |
+| macOS private API | **허용** (`tauri.app.macOSPrivateApi: true` + Cargo `macos-private-api` feature). popup `transparent: true` 등 macOS 전용 UI 효과를 위해 필요. App Store 미고려 결정에 따른 trade-off 명시 (리뷰 v3 Low 1) |
+| 외부 URL 열기 | **백엔드 Rust command 로 감싼다** (예: `open_ollama_download_page`). `tauri-plugin-shell` 미사용. FE 에 `shell.open` 권한 직접 부여 안 함. 백엔드는 `std::process::Command::new("open")` 으로 macOS 시스템 열기 수행 (리뷰 v3 High 1) |
+| 문서 포맷 정책 | `prettier --check .` 의 대상에서 **`.claude/agents/`, `.claude/commands/`, `.claude/rules/`, `.claude/CLAUDE.md`, `CLAUDE.local.md`, `docs/hytranslate-mac-prd.md`, `docs/plans/00-initial-setup.md`** 만 제외. 신규 plan / review 문서는 format:check 대상에 포함 (리뷰 v3 Low 2) |
 | 셋업 완료 후 흐름 | **셋업 완료 → 단일 커밋 → 검토 대기**. Phase 1 진입은 별도 지시 후 |
 
 ## 5. 명시적으로 본 단계에서 **하지 않을** 일
@@ -398,11 +404,27 @@ hytranslate/
 | 5 | Low | 초기 셋업에서 Phase별 의존성을 과도하게 잠금 | Step 6 을 "초기 셋업 최소" vs "Phase 진입 시 추가" 두 표로 재구성 |
 | 6 | Low | `tauri.conf.json` 위치 불일치 | Step 2 에 "Tauri 2 표준 위치" 주석 추가. `.claude/CLAUDE.md` 구조 예시 정리는 후속 문서 작업으로 표시 |
 
-### v2 재리뷰 (신규 발견 — 본 문서 v3 으로 반영)
+### v2 재리뷰 (이후 v3 코드리뷰에서 다시 변경됨)
 
 | # | 심각도 | 발견 | 반영 위치 |
 |---|---|---|---|
-| 1 | Medium | Step 2 의 Tauri plugin/capability 목록이 Step 6 의 "초기 최소" 정책과 충돌 | **Step 2 plugin 목록을 `tauri-plugin-shell` 만으로 축소**, **capability 도 `shell.open` 만 유지**. 나머지 plugin/capability 는 Step 6 의 "Phase 진입 시 추가 예정" 표를 따라 Phase 3/4 진입 시 plugin crate 와 함께 동시 추가한다고 명시. 두 Step 간 정책이 단일 출처(Step 6) 로 통일됨 |
+| 1 | Medium | Step 2 의 Tauri plugin/capability 목록이 Step 6 의 "초기 최소" 정책과 충돌 | (당시) **Step 2 plugin 목록을 `tauri-plugin-shell` 만으로 축소, capability 도 `shell.open` 만**. → **v3 코드리뷰 High 1 에 의해 다시 변경**: shell plugin 완전 제거, capability 는 `core:default` 만 |
+
+### v3 코드리뷰 — `docs/review/00-initial-setup-code-review.md` (구판)
+
+| # | 심각도 | 발견 | 반영 위치 |
+|---|---|---|---|
+| 1 | High | `shell:allow-open` 이 Ollama 설치 페이지로 제한되지 않음 | **`tauri-plugin-shell` crate / `@tauri-apps/plugin-shell` npm 의존성 / `shell:allow-open` capability 전부 제거**. `commands/mod.rs` 에 `open_ollama_download_page` 추가, 백엔드 상수 `OLLAMA_DOWNLOAD_URL` 만 `std::process::Command::new("open")` 으로 연다. §4 잠금 결정 "외부 URL 열기" 행 추가 |
+| 2 | Medium | 계획서의 디렉터리 구조 일부가 산출물로 남지 않음 | `src/{components,features,lib/hooks,types}/README.md` 추가 (인터뷰 결정: `.gitkeep` 대신 `README.md`) |
+| 3 | Medium | FE `isAppError` 가 variant 별 필수 필드를 검증하지 않음 | `src/lib/ipc/errors.ts` 의 `isAppError` 를 `kind` switch + variant payload 타입 검증으로 강화. `src/lib/ipc/errors.test.ts` 5 케이스 추가 |
+| 4 | Low | `macOSPrivateApi` 사용 결정이 계획서에 기록되어 있지 않음 | §4 잠금 결정에 "배포 채널 = DMG only", "macOS private API = 허용" 행 추가 |
+| 5 | Low | `.prettierignore` 가 계획서보다 넓어 문서 변경 포맷 검증을 우회 | `.prettierignore` 를 디렉터리 통째에서 구체 파일 경로 7개로 좁힘. §4 잠금 결정에 "문서 포맷 정책" 행 추가 |
+
+### v4 코드리뷰 — `docs/review/00-initial-setup-code-review.md` (현행)
+
+| # | 심각도 | 발견 | 반영 위치 |
+|---|---|---|---|
+| 1 | Medium | `tauri-plugin-shell` 미사용 결정이 계획서와 npm 의존성에 완전히 반영되지 않음 | `package.json` 에서 `@tauri-apps/plugin-shell` 제거 + lockfile 갱신. Step 2 plugin 목록을 "추가 plugin 없음" 으로 정정. Step 2 capability 설명을 `core:default` 만 으로 정정. Step 6 초기 의존성 표에서 `tauri-plugin-shell` 행 제거 (대신 누락되어 있던 `tauri-build@^2` 행을 보강). §10 v2 기록을 v3 으로 supersede 처리. v3 / v4 기록 신규 추가 |
 
 후속 문서 작업 (본 셋업 범위 외):
 - `.claude/CLAUDE.md` 의 프로젝트 구조 예시에서 `tauri.conf.json` 위치를 `src-tauri/tauri.conf.json` 로 정정

@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Initial-setup capability — core IPC only. External URLs (Ollama download page) are opened via a Rust-side command with a backend-fixed URL.",
+  "platforms": ["macOS"],
+  "windows": ["main", "popup", "menubar"],
+  "permissions": ["core:default"]
+}

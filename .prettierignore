@@ -1,0 +1,18 @@
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+coverage/
+playwright-report/
+test-results/
+package-lock.json
+
+# 레거시 / 외부 작성 문서 — 초기 셋업의 포맷 정책 적용 대상이 아님
+# (계획서 §4 "문서 포맷 정책" 잠금 결정 참조)
+.claude/agents/
+.claude/commands/
+.claude/rules/
+.claude/CLAUDE.md
+CLAUDE.local.md
+docs/hytranslate-mac-prd.md
+docs/plans/00-initial-setup.md
