@@ -1,11 +1,10 @@
 //! `get_settings` / `update_settings` (PRD §10, §9.2).
 //!
-//! 영속화는 `SettingsStore` 가 담당. 커맨드 레이어는 검증 + diff 기반 system reconcile.
-//! Phase 3 부터 단축키 / dock / autostart 변경 시 즉시 system 상태에 반영한다.
-//!
-//! 단축키 변경은 register-then-rollback transaction (코드리뷰 High 1): syntax 검증 →
-//! 시스템 register → settings 디스크 저장 → persist 실패 시 hotkey 도 이전 값으로 복구.
-//! unusable hotkey 가 settings.json 에 남는 상태를 만들지 않는다.
+//! 영속화는 `SettingsStore` 가 담당. 커맨드 레이어는 검증 + system transaction 을 거친다.
+//! Phase 3 의 모든 OS-mutating settings (hotkey / dock / autostart) 는 transactional 로
+//! 적용된다. 한 step 이 실패하면 이미 적용된 step 들이 역순으로 rollback 되고,
+//! settings.json 은 변경되지 않는다 — UI 가 "저장됨" 으로 표시하지만 macOS 상태는
+//! 변경되지 않는 mismatch 를 방지한다 (코드리뷰 second-pass High 1).
 
 use std::sync::Arc;
 
@@ -26,8 +25,7 @@ pub async fn update_settings<R: tauri::Runtime>(
     store: tauri::State<'_, Arc<SettingsStore>>,
     settings: Settings,
 ) -> AppResult<Settings> {
-    // PRD §12 — non-loopback endpoint 저장 거부. 설정 단계에서 막아두면 번역 시점에
-    // NetworkBlocked 가 발생하는 일이 없다.
+    // PRD §12 — non-loopback endpoint 저장 거부.
     if !is_endpoint_allowed(&settings.ollama_endpoint) {
         return Err(AppError::NetworkBlocked);
     }
@@ -35,41 +33,33 @@ pub async fn update_settings<R: tauri::Runtime>(
     let _ = shortcuts::parser::parse(&settings.global_hotkey)?;
 
     let prev = store.get();
-    let hotkey_changed = prev.global_hotkey != settings.global_hotkey;
-    let previous_hotkey = prev.global_hotkey.clone();
+    let hotkey_change = (prev.global_hotkey != settings.global_hotkey)
+        .then(|| (prev.global_hotkey.clone(), settings.global_hotkey.clone()));
+    let dock_change = (prev.hide_dock_icon != settings.hide_dock_icon)
+        .then_some((prev.hide_dock_icon, settings.hide_dock_icon));
+    let autostart_change = (prev.start_at_login != settings.start_at_login)
+        .then_some((prev.start_at_login, settings.start_at_login));
 
-    // 1) 새 단축키를 먼저 시스템에 등록. 실패 시 settings 디스크 변경 없이 즉시 에러.
-    if hotkey_changed {
-        shortcuts::try_swap(&app, &previous_hotkey, &settings.global_hotkey)?;
-    }
+    // settings 는 closure 안에서 한 번 소비된다 — Option 으로 감싸 take().
+    let mut settings_holder = Some(settings);
+    let store_clone = store.inner().clone();
 
-    // 2) settings 디스크 저장. 실패 시 hotkey 를 이전 값으로 rollback 한 뒤 에러를 그대로 전파.
-    let saved = match store.update(settings) {
-        Ok(s) => s,
-        Err(e) => {
-            if hotkey_changed {
-                // best-effort rollback. rollback 도 실패하면 단축키 비활성 상태로 남지만
-                // settings 는 여전히 이전 값이므로 재시작 시 정상 재등록된다.
-                let _ = shortcuts::try_rollback(&app, &previous_hotkey);
-            }
-            return Err(e);
-        }
-    };
+    system::orchestrate_settings_apply(
+        hotkey_change,
+        dock_change,
+        autostart_change,
+        |prev, next| shortcuts::try_swap(&app, prev, next),
+        |hidden| system::apply_dock_hidden(&app, hidden),
+        |enabled| system::apply_autostart(&app, enabled),
+        || {
+            let s = settings_holder
+                .take()
+                .ok_or_else(|| AppError::internal("settings consumed twice"))?;
+            store_clone.update(s).map(|_| ())
+        },
+    )?;
 
-    // 3) Dock / autostart 변경 적용. 실패는 로그로만 — settings 는 이미 일관 상태이고,
-    // 재시작 시 setup() 가 동일 reconcile 을 다시 시도한다.
-    if prev.hide_dock_icon != saved.hide_dock_icon {
-        if let Err(err) = system::apply_dock_hidden(&app, saved.hide_dock_icon) {
-            tracing::warn!(error = ?err, "dock activation policy update failed");
-        }
-    }
-    if prev.start_at_login != saved.start_at_login {
-        if let Err(err) = system::apply_autostart(&app, saved.start_at_login) {
-            tracing::warn!(error = ?err, "autostart update failed");
-        }
-    }
-
-    Ok(saved)
+    Ok(store.get())
 }
 
 #[cfg(test)]
