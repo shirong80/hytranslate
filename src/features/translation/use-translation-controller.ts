@@ -30,10 +30,23 @@ export function useTranslationController(options: UseTranslationControllerOption
   const markCompleted = useTranslationStore((s) => s.markCompleted);
   const markCancelled = useTranslationStore((s) => s.markCancelled);
   const markError = useTranslationStore((s) => s.markError);
-  const clearOutput = useTranslationStore((s) => s.clearOutput);
+  const setLocalError = useTranslationStore((s) => s.setLocalError);
+  const setIdle = useTranslationStore((s) => s.setIdle);
 
   const debounceTimer = useRef<number | null>(null);
   const inFlightRef = useRef<string | null>(null);
+
+  /** in-flight 요청이 있으면 백엔드 취소를 보내고 ref 를 비운다. */
+  const cancelInFlight = useCallback(async () => {
+    const previousId = inFlightRef.current;
+    if (!previousId) return;
+    inFlightRef.current = null;
+    try {
+      await cancelTranslation(previousId);
+    } catch {
+      // 이미 종료된 요청일 수 있음. 무시.
+    }
+  }, []);
 
   useEffect(() => {
     let cleanup: (() => void) | undefined;
@@ -71,25 +84,19 @@ export function useTranslationController(options: UseTranslationControllerOption
   const runTranslation = useCallback(async () => {
     const text = useTranslationStore.getState().sourceText;
     if (text.trim().length === 0) {
-      clearOutput();
+      await cancelInFlight();
+      setIdle();
       return;
     }
+    // 길이 초과는 client-side 검증. in-flight 요청을 먼저 취소하여 stale chunk가
+    // 새 상태에 누적되지 않게 한다.
     if ([...text].length > MAIN_INPUT_LIMIT) {
-      markError({
-        requestId: 'local',
-        error: { kind: 'InputTooLong', limit: MAIN_INPUT_LIMIT },
-      });
+      await cancelInFlight();
+      setLocalError({ kind: 'InputTooLong', limit: MAIN_INPUT_LIMIT });
       return;
     }
 
-    const previousId = inFlightRef.current;
-    if (previousId) {
-      try {
-        await cancelTranslation(previousId);
-      } catch {
-        // 무시: 이미 종료된 요청일 수 있음
-      }
-    }
+    await cancelInFlight();
 
     const newId = generateRequestId();
     inFlightRef.current = newId;
@@ -113,7 +120,7 @@ export function useTranslationController(options: UseTranslationControllerOption
       }
       if (inFlightRef.current === newId) inFlightRef.current = null;
     }
-  }, [beginRequest, clearOutput, markError]);
+  }, [beginRequest, cancelInFlight, markError, setIdle, setLocalError]);
 
   useEffect(() => {
     if (debounceTimer.current) {
@@ -121,18 +128,12 @@ export function useTranslationController(options: UseTranslationControllerOption
       debounceTimer.current = null;
     }
     if (sourceText.trim().length === 0) {
-      if (inFlightRef.current) {
-        cancelTranslation(inFlightRef.current).catch(() => {
-          // ignore
-        });
-        inFlightRef.current = null;
-      }
-      clearOutput();
+      void cancelInFlight().then(() => setIdle());
       return;
     }
     debounceTimer.current = window.setTimeout(() => {
       runTranslation().catch(() => {
-        // already mapped to markError above
+        // 이미 markError로 매핑됨
       });
     }, debounceMs);
 
@@ -142,7 +143,7 @@ export function useTranslationController(options: UseTranslationControllerOption
         debounceTimer.current = null;
       }
     };
-  }, [sourceText, sourceLanguage, model, debounceMs, runTranslation, clearOutput]);
+  }, [sourceText, sourceLanguage, model, debounceMs, runTranslation, cancelInFlight, setIdle]);
 
   const retranslateImmediately = useCallback(() => {
     if (debounceTimer.current) {
@@ -153,10 +154,8 @@ export function useTranslationController(options: UseTranslationControllerOption
   }, [runTranslation]);
 
   const cancelCurrent = useCallback(() => {
-    if (inFlightRef.current) {
-      void cancelTranslation(inFlightRef.current);
-    }
-  }, []);
+    void cancelInFlight();
+  }, [cancelInFlight]);
 
   return { runImmediately: retranslateImmediately, cancelCurrent, currentRequestId: requestId };
 }

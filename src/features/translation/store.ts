@@ -25,7 +25,14 @@ export interface TranslationActions {
   markCompleted: (payload: { requestId: string; fullText: string; durationMs: number }) => void;
   markCancelled: (payload: { requestId: string }) => void;
   markError: (payload: { requestId: string; error: AppError }) => void;
+  /**
+   * client-side 검증 에러를 표시한다. in-flight 요청이 있다면 즉시 무효화한다 —
+   * 호출자가 이미 cancelTranslation을 보냈다는 가정. server lifecycle와 분리된
+   * action 이므로 requestId 매칭 검사를 거치지 않는다.
+   */
+  setLocalError: (error: AppError) => void;
   clearOutput: () => void;
+  setIdle: () => void;
   reset: () => void;
 }
 
@@ -93,8 +100,30 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
     set({ status: 'error', error, requestId: null });
   },
 
+  setLocalError: (error) => {
+    set({
+      status: 'error',
+      error,
+      requestId: null,
+      output: '',
+      durationMs: null,
+      startedAtMs: null,
+    });
+  },
+
   clearOutput: () => {
     set({ output: '', durationMs: null, error: null });
+  },
+
+  setIdle: () => {
+    set({
+      status: 'idle',
+      error: null,
+      requestId: null,
+      output: '',
+      startedAtMs: null,
+      durationMs: null,
+    });
   },
 
   reset: () => {

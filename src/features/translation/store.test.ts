@@ -76,4 +76,39 @@ describe('translation store', () => {
     expect(state.error).toBeNull();
     expect(state.durationMs).toBeNull();
   });
+
+  it('setLocalError surfaces client-side error regardless of requestId', () => {
+    const store = useTranslationStore.getState();
+    // idle 상태 (requestId=null) 에서도 표시되어야 한다.
+    store.setLocalError({ kind: 'InputTooLong', limit: 30000 });
+    let state = useTranslationStore.getState();
+    expect(state.status).toBe('error');
+    expect(state.error).toEqual({ kind: 'InputTooLong', limit: 30000 });
+    expect(state.requestId).toBeNull();
+
+    // 진행 중 상태에서 setLocalError 가 호출되면 in-flight 매칭에 의존하지 않고 갱신.
+    store.beginRequest('req-X');
+    expect(useTranslationStore.getState().status).toBe('translating');
+    store.setLocalError({ kind: 'InputTooLong', limit: 30000 });
+    state = useTranslationStore.getState();
+    expect(state.status).toBe('error');
+    expect(state.requestId).toBeNull();
+    expect(state.output).toBe('');
+  });
+
+  it('setIdle returns store to idle and clears output/request/error', () => {
+    const store = useTranslationStore.getState();
+    store.beginRequest('req-Y');
+    store.appendChunk({ requestId: 'req-Y', delta: 'partial' });
+    store.markCompleted({ requestId: 'req-Y', fullText: 'partial', durationMs: 99 });
+    expect(useTranslationStore.getState().status).toBe('completed');
+
+    store.setIdle();
+    const state = useTranslationStore.getState();
+    expect(state.status).toBe('idle');
+    expect(state.requestId).toBeNull();
+    expect(state.output).toBe('');
+    expect(state.durationMs).toBeNull();
+    expect(state.error).toBeNull();
+  });
 });

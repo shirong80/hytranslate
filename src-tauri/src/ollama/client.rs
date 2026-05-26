@@ -98,7 +98,18 @@ impl OllamaClient {
             res = self.http.post(&url).json(&body).send() => res.map_err(AppError::from)?,
         };
 
-        let response = response.error_for_status().map_err(AppError::from)?;
+        // status별 의미 보존: 404 는 모델 미설치, 그 외는 일반 reqwest 매핑.
+        let response = match response.error_for_status_ref() {
+            Ok(_) => response,
+            Err(err) => {
+                if err.status() == Some(reqwest::StatusCode::NOT_FOUND) {
+                    return Err(AppError::ModelMissing {
+                        model: model.to_string(),
+                    });
+                }
+                return Err(AppError::from(err));
+            }
+        };
         let mut stream = response.bytes_stream();
         let mut line_buf = LineBuffer::new();
         let mut full_text = String::new();
@@ -122,6 +133,8 @@ impl OllamaClient {
                             }
                         }
                         if chunk.done {
+                            // `done:true` chunk 가 곧 정상 종료. 잔여 partial line 은
+                            // Ollama 가 done 이후 더 보내지 않으므로 무시 가능.
                             return Ok(full_text);
                         }
                     }
@@ -129,7 +142,15 @@ impl OllamaClient {
             }
         }
 
-        Ok(full_text)
+        // EOF 인데 `done:true` 를 보지 못함 → incomplete stream.
+        // 부분 번역을 정상 완료로 보고하지 않도록 명시적 에러를 반환한다.
+        Err(AppError::Internal {
+            message: if line_buf.is_empty() {
+                "ollama stream ended before `done: true`".to_string()
+            } else {
+                "ollama stream ended with trailing partial line".to_string()
+            },
+        })
     }
 }
 
@@ -150,6 +171,10 @@ impl LineBuffer {
 
     fn feed(&mut self, bytes: &[u8]) {
         self.buf.extend_from_slice(bytes);
+    }
+
+    fn is_empty(&self) -> bool {
+        self.buf.is_empty()
     }
 
     fn next_line(&mut self) -> Option<String> {
@@ -249,6 +274,82 @@ mod tests {
         Mock::given(method("POST"))
             .and(path(GENERATE_PATH))
             .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::new(server.uri()).unwrap();
+        let cancel = CancellationToken::new();
+        let result = client
+            .generate_stream(
+                "test-model",
+                SourceLanguage::Korean,
+                "안녕",
+                &cancel,
+                |_| ChunkFlow::Continue,
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::Internal { .. })));
+    }
+
+    #[tokio::test]
+    async fn http_404_maps_to_model_missing() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path(GENERATE_PATH))
+            .respond_with(ResponseTemplate::new(404).set_body_string("model not found"))
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::new(server.uri()).unwrap();
+        let cancel = CancellationToken::new();
+        let result = client
+            .generate_stream(
+                "ghost-model",
+                SourceLanguage::Korean,
+                "안녕",
+                &cancel,
+                |_| ChunkFlow::Continue,
+            )
+            .await;
+        match result {
+            Err(AppError::ModelMissing { model }) => assert_eq!(model, "ghost-model"),
+            other => panic!("expected ModelMissing, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_without_done_true_returns_error() {
+        let server = MockServer::start().await;
+        // `done:true` chunk 없이 끊긴 응답.
+        let body = "{\"model\":\"x\",\"response\":\"hi\",\"done\":false}\n".to_string();
+        Mock::given(method("POST"))
+            .and(path(GENERATE_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/x-ndjson"))
+            .mount(&server)
+            .await;
+
+        let client = OllamaClient::new(server.uri()).unwrap();
+        let cancel = CancellationToken::new();
+        let result = client
+            .generate_stream(
+                "test-model",
+                SourceLanguage::Korean,
+                "안녕",
+                &cancel,
+                |_| ChunkFlow::Continue,
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::Internal { .. })));
+    }
+
+    #[tokio::test]
+    async fn stream_with_trailing_partial_line_returns_error() {
+        let server = MockServer::start().await;
+        // `done` 도 보지 못하고 newline 없는 잔여 데이터로 끝남.
+        let body = "{\"model\":\"x\",\"response\":\"hi\",\"done\":false}\n{\"model\":\"x\",\"response\":\"oops".to_string();
+        Mock::given(method("POST"))
+            .and(path(GENERATE_PATH))
+            .respond_with(ResponseTemplate::new(200).set_body_raw(body, "application/x-ndjson"))
             .mount(&server)
             .await;
 
