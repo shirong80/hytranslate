@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tauri::Emitter;
+use tauri::{Emitter, Manager};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -18,6 +18,7 @@ use crate::events::{
     TRANSLATION_CANCELLED, TRANSLATION_CHUNK, TRANSLATION_COMPLETED, TRANSLATION_ERROR,
     TRANSLATION_STARTED,
 };
+use crate::history::{self, HistoryRepo, InsertRecord};
 use crate::language::{self, SourceLanguage};
 use crate::ollama::{ChunkFlow, OllamaClient};
 use crate::settings::SettingsStore;
@@ -141,14 +142,19 @@ pub async fn translate_stream<R: tauri::Runtime>(
         request.source_language
     };
 
-    let endpoint = settings.get().ollama_endpoint;
+    let snapshot = settings.get();
+    let endpoint = snapshot.ollama_endpoint;
+    let save_history = snapshot.save_history;
 
     let token = CancellationToken::new();
     registry.insert(request.request_id.clone(), token.clone());
 
     let app_handle = app.clone();
     let client = (*client).clone();
-    let registry = registry.inner().clone();
+    let registry_inner = registry.inner().clone();
+    let history_repo: Option<Arc<HistoryRepo>> = app
+        .try_state::<Arc<HistoryRepo>>()
+        .map(|s: tauri::State<'_, Arc<HistoryRepo>>| s.inner().clone());
     let resolved_request = TranslateRequest {
         source_language: resolved_language,
         ..request
@@ -158,10 +164,12 @@ pub async fn translate_stream<R: tauri::Runtime>(
         run_translation(
             app_handle,
             client,
-            registry,
+            registry_inner,
             endpoint,
             resolved_request,
             token,
+            history_repo,
+            save_history,
         )
         .await;
     });
@@ -179,6 +187,7 @@ pub async fn cancel_translation(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 async fn run_translation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     client: OllamaClient,
@@ -186,6 +195,8 @@ async fn run_translation<R: tauri::Runtime>(
     endpoint: String,
     request: TranslateRequest,
     token: CancellationToken,
+    history_repo: Option<Arc<HistoryRepo>>,
+    save_history: bool,
 ) {
     let request_id = request.request_id.clone();
     let model = request.model.clone();
@@ -249,6 +260,16 @@ async fn run_translation<R: tauri::Runtime>(
                 return;
             }
             let duration_ms = started.elapsed().as_millis();
+            // 이력 영속화 — completed 이후, save_history 가 켜진 경우에만 (PRD §8.7).
+            // 실패해도 사용자 경로에는 영향을 주지 않는다 → warn 로그만.
+            persist_completed(
+                history_repo.as_deref(),
+                save_history,
+                &request_id,
+                &request,
+                &full_text,
+                duration_ms,
+            );
             let _ = app.emit(
                 TRANSLATION_COMPLETED,
                 CompletedPayload {
@@ -285,6 +306,38 @@ async fn run_translation<R: tauri::Runtime>(
     }
 }
 
+/// PRD §8.7 — completed 이후에만 호출. cancel/error 경로는 호출하지 않는다.
+/// `save_history` 가 false 거나 repo 가 미초기화면 silently skip.
+fn persist_completed(
+    repo: Option<&HistoryRepo>,
+    save_history: bool,
+    request_id: &str,
+    request: &TranslateRequest,
+    full_text: &str,
+    duration_ms: u128,
+) {
+    if !save_history {
+        return;
+    }
+    let Some(repo) = repo else {
+        tracing::debug!(request_id, "history repo unavailable; skip insert");
+        return;
+    };
+    let duration_clamped = i64::try_from(duration_ms).unwrap_or(i64::MAX);
+    let insert = InsertRecord {
+        id: request_id.to_string(),
+        source_text: request.source_text.clone(),
+        source_language: request.source_language,
+        translated_text: full_text.to_string(),
+        model: request.model.clone(),
+        duration_ms: duration_clamped,
+        created_at: history::now_iso8601(),
+    };
+    if let Err(e) = repo.insert(insert) {
+        tracing::warn!(request_id, error = ?e, "history insert failed");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,5 +363,60 @@ mod tests {
     fn validate_request_id_rejects_non_uuid() {
         assert!(validate_request_id("not-a-uuid").is_err());
         assert!(validate_request_id(&Uuid::new_v4().to_string()).is_ok());
+    }
+
+    fn fresh_repo() -> (tempfile::TempDir, Arc<HistoryRepo>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hytranslate.sqlite");
+        let pool = crate::db::open(&path).unwrap();
+        (dir, HistoryRepo::new(pool))
+    }
+
+    fn fake_request() -> TranslateRequest {
+        TranslateRequest {
+            source_text: "안녕하세요".to_string(),
+            source_language: SourceLanguage::Korean,
+            model: "test-model".to_string(),
+            request_id: Uuid::new_v4().to_string(),
+        }
+    }
+
+    #[test]
+    fn persist_completed_writes_when_save_history_on() {
+        let (_d, repo) = fresh_repo();
+        let request = fake_request();
+        persist_completed(
+            Some(&repo),
+            true,
+            &request.request_id,
+            &request,
+            "Hello",
+            100,
+        );
+        let got = repo.get(&request.request_id).unwrap();
+        assert!(got.is_some());
+    }
+
+    #[test]
+    fn persist_completed_skips_when_save_history_off() {
+        let (_d, repo) = fresh_repo();
+        let request = fake_request();
+        persist_completed(
+            Some(&repo),
+            false,
+            &request.request_id,
+            &request,
+            "Hello",
+            100,
+        );
+        let got = repo.get(&request.request_id).unwrap();
+        assert!(got.is_none());
+    }
+
+    #[test]
+    fn persist_completed_no_op_when_repo_missing() {
+        let request = fake_request();
+        // panic 없이 그냥 통과해야 한다.
+        persist_completed(None, true, &request.request_id, &request, "Hello", 100);
     }
 }

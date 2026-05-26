@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
+import { HistoryPanel } from '@features/history/components/history-panel';
 import { SettingsPanel } from '@features/settings/components/settings-panel';
 import { useSettingsStore } from '@features/settings/store';
 import { TranslationPanel } from '@features/translation/components/translation-panel';
@@ -10,7 +11,7 @@ import { applyTheme, type ThemeMode } from '@lib/theme';
 
 import '@styles/globals.css';
 
-type Route = 'translate' | 'settings';
+type Route = 'translate' | 'history' | 'settings';
 
 function App() {
   const [route, setRoute] = useState<Route>('translate');
@@ -40,7 +41,12 @@ function App() {
   return (
     <main className="h-screen bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">
       {route === 'translate' ? (
-        <TranslationPanel onOpenSettings={() => setRoute('settings')} />
+        <TranslationPanel
+          onOpenSettings={() => setRoute('settings')}
+          onOpenHistory={() => setRoute('history')}
+        />
+      ) : route === 'history' ? (
+        <HistoryPanel onBack={() => setRoute('translate')} />
       ) : (
         <SettingsPanel onBack={() => setRoute('translate')} />
       )}

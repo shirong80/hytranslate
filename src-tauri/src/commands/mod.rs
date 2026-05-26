@@ -8,12 +8,15 @@ use std::sync::Arc;
 
 use tauri::{Builder, Manager, Runtime};
 
+use crate::db;
 use crate::errors::{AppError, AppResult};
+use crate::history::HistoryRepo;
 use crate::ollama::OllamaClient;
 use crate::settings::SettingsStore;
 use crate::{menubar, shortcuts};
 
 pub mod detect;
+pub mod history;
 pub mod popup;
 pub mod settings;
 pub mod system;
@@ -54,6 +57,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             Some(vec!["--autostart"]),
         ))
+        .plugin(tauri_plugin_dialog::init())
         .manage(registry)
         .setup(|app| {
             // Settings 영속화 위치: app_data_dir/settings.json
@@ -76,6 +80,19 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
                 Box::new(std::io::Error::other(format!("ollama client init: {e:?}")))
             })?;
             app.manage(client);
+
+            // SQLite 풀 + 이력 레포지토리. DB 가 망가졌더라도 앱 자체는 계속 떠 있어야
+            // 하므로 실패는 로그만 남기고 setup 은 통과. 이력 관련 명령은 풀 부재 시
+            // State 미발견으로 자동 실패 → FE 에 inline 에러로 노출.
+            let db_path = data_dir.join("hytranslate.sqlite");
+            match db::open(&db_path) {
+                Ok(pool) => {
+                    app.manage(HistoryRepo::new(pool));
+                }
+                Err(e) => {
+                    tracing::warn!(error = ?e, "history db open failed; history disabled");
+                }
+            }
 
             // 글로벌 단축키 + 트레이는 설치 실패 시 앱 자체는 살아 있어야 한다.
             // 실패는 로그로 남기고 setup 은 통과.
@@ -105,5 +122,14 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             popup::show_popup,
             popup::hide_popup,
             popup::toggle_popup,
+            history::list_translation_records,
+            history::search_translation_records,
+            history::get_translation_record,
+            history::delete_translation_record,
+            history::delete_all_translation_records,
+            history::toggle_favorite,
+            history::set_tags,
+            history::export_history_csv,
+            history::export_history_json,
         ])
 }

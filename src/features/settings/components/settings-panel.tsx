@@ -1,6 +1,7 @@
-import { ArrowLeft, Check, ExternalLink, Loader2 } from 'lucide-react';
+import { ArrowLeft, Check, ExternalLink, Loader2, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
+import { useHistoryStore } from '@features/history/store';
 import { t } from '@i18n/ko';
 import { invoke } from '@lib/ipc/client';
 import { messageFor } from '@lib/ipc/errors';
@@ -99,6 +100,7 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
             checked={draft.saveHistory}
             onChange={(v) => setDraft({ ...draft, saveHistory: v })}
           />
+          <DeleteAllHistoryRow />
         </Section>
 
         <Section title={t('settings.section.shortcut')}>
@@ -181,6 +183,34 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
               : t('settings.action.save')}
         </button>
       </footer>
+    </div>
+  );
+}
+
+function DeleteAllHistoryRow() {
+  const removeAll = useHistoryStore((s) => s.removeAll);
+  const [busy, setBusy] = useState(false);
+  const handleClick = async () => {
+    if (!window.confirm(t('history.deleteAll.confirm'))) return;
+    setBusy(true);
+    try {
+      await removeAll();
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="flex items-center justify-between gap-3 text-xs text-neutral-700 dark:text-neutral-300">
+      <span>{t('settings.deleteAllHistory.label')}</span>
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={busy}
+        className="inline-flex items-center gap-1 rounded-md border border-rose-200 bg-white px-2 py-1 text-xs text-rose-700 hover:border-rose-300 hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-50 dark:border-rose-900 dark:bg-neutral-900 dark:text-rose-300 dark:hover:bg-rose-950"
+      >
+        <Trash2 className="size-3" aria-hidden />
+        {t('history.deleteAll')}
+      </button>
     </div>
   );
 }

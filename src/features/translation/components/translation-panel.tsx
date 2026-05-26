@@ -1,4 +1,4 @@
-import { Check, Copy, Loader2, RefreshCcw, Settings as SettingsIcon } from 'lucide-react';
+import { Check, Copy, History, Loader2, RefreshCcw, Settings as SettingsIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { t } from '@i18n/ko';
@@ -13,9 +13,10 @@ import { SourceLanguageSelect } from './source-language-select';
 
 interface TranslationPanelProps {
   onOpenSettings?: () => void;
+  onOpenHistory?: () => void;
 }
 
-export function TranslationPanel({ onOpenSettings }: TranslationPanelProps = {}) {
+export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationPanelProps = {}) {
   const sourceText = useTranslationStore((s) => s.sourceText);
   const sourceLanguage = useTranslationStore((s) => s.sourceLanguage);
   const output = useTranslationStore((s) => s.output);
@@ -73,6 +74,17 @@ export function TranslationPanel({ onOpenSettings }: TranslationPanelProps = {})
         </h1>
         <div className="flex items-center gap-2">
           <ModelBadge model={model} status={status} durationMs={durationMs} />
+          {onOpenHistory ? (
+            <button
+              type="button"
+              onClick={onOpenHistory}
+              aria-label={t('nav.history')}
+              className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              <History className="size-3.5" aria-hidden />
+              {t('nav.history')}
+            </button>
+          ) : null}
           {onOpenSettings ? (
             <button
               type="button"
