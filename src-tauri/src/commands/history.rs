@@ -221,17 +221,24 @@ pub(crate) fn write_csv(path: &std::path::Path, records: &[TranslationRecord]) -
         let lang = serde_json::to_string(&r.source_language)
             .map(|s| s.trim_matches('"').to_string())
             .unwrap_or_default();
+        // 코드리뷰 Med 2 — CSV formula injection 방어.
+        // model 출력 / 사용자 입력 / 태그 모두 신뢰 불가. `=`, `+`, `-`, `@`, tab, CR 로
+        // 시작하는 셀에 single-quote 를 선행 부착해 spreadsheet 가 formula 로 해석하지 않게 한다.
+        let model = neutralize_csv_cell(r.model.as_str());
+        let tags_neutralized = neutralize_csv_cell(tags.as_str());
+        let source = neutralize_csv_cell(r.source_text.as_str());
+        let translated = neutralize_csv_cell(r.translated_text.as_str());
         writer
             .write_record([
                 r.id.as_str(),
                 r.created_at.as_str(),
                 lang.as_str(),
-                r.model.as_str(),
+                model.as_str(),
                 &r.duration_ms.to_string(),
                 if r.is_favorite { "1" } else { "0" },
-                tags.as_str(),
-                r.source_text.as_str(),
-                r.translated_text.as_str(),
+                tags_neutralized.as_str(),
+                source.as_str(),
+                translated.as_str(),
             ])
             .map_err(|e| AppError::internal(format!("csv row: {e}")))?;
     }
@@ -239,6 +246,22 @@ pub(crate) fn write_csv(path: &std::path::Path, records: &[TranslationRecord]) -
         .flush()
         .map_err(|e| AppError::internal(format!("csv flush: {e}")))?;
     Ok(())
+}
+
+/// OWASP "CSV Injection" 방어 — `=`, `+`, `-`, `@`, tab, CR 로 시작하는 셀에
+/// single-quote (`'`) prefix 를 붙여 Excel/Numbers/Sheets 가 formula 로 해석하지 못하게 한다.
+/// 빈 문자열은 그대로.
+fn neutralize_csv_cell(value: &str) -> String {
+    let first = value.chars().next();
+    match first {
+        Some('=') | Some('+') | Some('-') | Some('@') | Some('\t') | Some('\r') => {
+            let mut out = String::with_capacity(value.len() + 1);
+            out.push('\'');
+            out.push_str(value);
+            out
+        }
+        _ => value.to_string(),
+    }
 }
 
 pub(crate) fn write_json(path: &std::path::Path, records: &[TranslationRecord]) -> AppResult<()> {
@@ -288,6 +311,53 @@ mod tests {
         assert!(body.starts_with("id,created_at,source_language,model,duration_ms,is_favorite,tags,source_text,translated_text"));
         assert!(body.contains("1,2026-05-26T00:00:00Z,Korean,m,42,0,연구,안녕,Hi"));
         assert!(body.contains("2,2026-05-26T00:00:00Z,Korean,m,42,1,,감사,Thanks"));
+    }
+
+    #[test]
+    fn csv_neutralizes_formula_leading_cells() {
+        // 코드리뷰 Med 2 회귀 — 모델 출력 / 사용자 입력에 formula 가 끼어도
+        // Excel/Numbers/Sheets 가 실행하지 않도록 single-quote 가 선행해야 한다.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.csv");
+        let mut r = rec("1", "src", "dst", vec![], false);
+        r.source_text = "=HYPERLINK(\"http://evil\",\"x\")".to_string();
+        r.translated_text = "+cmd|'/c calc'!A1".to_string();
+        r.tags = vec!["@SUM(A1:A2)".to_string()];
+        r.model = "-malicious".to_string();
+        write_csv(&path, &[r]).unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(body.contains("'=HYPERLINK"), "= should be quoted: {body:?}");
+        assert!(body.contains("'+cmd|"), "+ should be quoted: {body:?}");
+        assert!(body.contains("'@SUM"), "@ should be quoted: {body:?}");
+        assert!(body.contains("'-malicious"), "- should be quoted: {body:?}");
+    }
+
+    #[test]
+    fn csv_does_not_double_quote_benign_cells() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("h.csv");
+        write_csv(
+            &path,
+            &[rec("id", "안녕하세요", "Hello", vec!["연구"], false)],
+        )
+        .unwrap();
+        let body = fs::read_to_string(&path).unwrap();
+        assert!(!body.contains("'안녕"));
+        assert!(!body.contains("'Hello"));
+        assert!(!body.contains("'연구"));
+    }
+
+    #[test]
+    fn neutralize_csv_cell_matrix() {
+        assert_eq!(neutralize_csv_cell("=A1"), "'=A1");
+        assert_eq!(neutralize_csv_cell("+1"), "'+1");
+        assert_eq!(neutralize_csv_cell("-1"), "'-1");
+        assert_eq!(neutralize_csv_cell("@x"), "'@x");
+        assert_eq!(neutralize_csv_cell("\tx"), "'\tx");
+        assert_eq!(neutralize_csv_cell("\rx"), "'\rx");
+        assert_eq!(neutralize_csv_cell(""), "");
+        assert_eq!(neutralize_csv_cell("hello"), "hello");
+        assert_eq!(neutralize_csv_cell("안녕"), "안녕");
     }
 
     #[test]

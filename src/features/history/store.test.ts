@@ -139,4 +139,67 @@ describe('useHistoryStore', () => {
     await useHistoryStore.getState().fetch();
     expect(useHistoryStore.getState().error?.kind).toBe('Internal');
   });
+
+  // 코드리뷰 Med 1 회귀 — favorite-only 필터 활성 상태에서 unfavorite 하면
+  // row 가 즉시 records 에서 빠지고 total / selectedId 가 재조정된다.
+  it('toggleFavorite drops row when favorite-only filter excludes it', async () => {
+    setListResult([record('a', { isFavorite: true }), record('b', { isFavorite: true })]);
+    useHistoryStore.getState().setFavoriteFilter(true);
+    await useHistoryStore.getState().fetch();
+    useHistoryStore.getState().selectRecord('a');
+    mocks.toggle.mockResolvedValue(false);
+    await useHistoryStore.getState().toggleFavorite('a');
+    const state = useHistoryStore.getState();
+    expect(state.records.map((r) => r.id)).toEqual(['b']);
+    expect(state.total).toBe(1);
+    expect(state.selectedId).toBe('b');
+  });
+
+  // 코드리뷰 Med 1 회귀 — tag 필터 활성 상태에서 매칭 태그가 빠지면 row 도 빠진다.
+  it('setTags drops row when active tag filter no longer matches', async () => {
+    setListResult([record('a', { tags: ['법무'] }), record('b', { tags: ['법무'] })]);
+    useHistoryStore.getState().setTagFilter('법무');
+    await useHistoryStore.getState().fetch();
+    useHistoryStore.getState().selectRecord('a');
+    mocks.setTags.mockResolvedValue(true);
+    await useHistoryStore.getState().setTags('a', ['연구']);
+    const state = useHistoryStore.getState();
+    expect(state.records.map((r) => r.id)).toEqual(['b']);
+    expect(state.total).toBe(1);
+    expect(state.selectedId).toBe('b');
+  });
+
+  // 코드리뷰 Med 1 — 필터가 꺼져 있으면 mutation 후에도 row 가 유지된다.
+  it('toggleFavorite keeps row when no filter is active', async () => {
+    setListResult([record('a', { isFavorite: true })]);
+    await useHistoryStore.getState().fetch();
+    mocks.toggle.mockResolvedValue(false);
+    await useHistoryStore.getState().toggleFavorite('a');
+    expect(useHistoryStore.getState().records.map((r) => r.id)).toEqual(['a']);
+    expect(useHistoryStore.getState().total).toBe(1);
+  });
+
+  // 코드리뷰 Med 3 회귀 — older fetch 가 newer 보다 늦게 resolve 해도 stale 응답은 commit 되지 않는다.
+  it('drops stale fetch response when a newer fetch has started', async () => {
+    // 첫 fetch (older) — 응답을 수동으로 control 한다.
+    let resolveOlder!: (value: ListResult) => void;
+    mocks.list.mockReturnValueOnce(
+      new Promise<ListResult>((res) => {
+        resolveOlder = res;
+      }),
+    );
+    const olderPromise = useHistoryStore.getState().fetch();
+
+    // 두 번째 fetch (newer) — 곧바로 resolve.
+    useHistoryStore.getState().setQuery('newer');
+    mocks.search.mockResolvedValueOnce({ records: [record('newer')], total: 1 });
+    await useHistoryStore.getState().fetch();
+    expect(useHistoryStore.getState().records.map((r) => r.id)).toEqual(['newer']);
+
+    // 그 다음 stale older response 가 resolve — state 가 덮어쓰여서는 안 된다.
+    resolveOlder({ records: [record('older')], total: 1 });
+    await olderPromise;
+    expect(useHistoryStore.getState().records.map((r) => r.id)).toEqual(['newer']);
+    expect(useHistoryStore.getState().total).toBe(1);
+  });
 });
