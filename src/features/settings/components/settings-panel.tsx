@@ -1,7 +1,8 @@
-import { ArrowLeft, Check, Loader2 } from 'lucide-react';
+import { ArrowLeft, Check, ExternalLink, Loader2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { t } from '@i18n/ko';
+import { invoke } from '@lib/ipc/client';
 import { messageFor } from '@lib/ipc/errors';
 
 import { useSettingsStore } from '../store';
@@ -115,6 +116,16 @@ export function SettingsPanel({ onBack }: SettingsPanelProps) {
             <p className="text-xs text-neutral-500 dark:text-neutral-500">
               {t('settings.globalHotkey.help')}
             </p>
+            <button
+              type="button"
+              onClick={() => {
+                invoke<void>('open_accessibility_settings').catch(() => undefined);
+              }}
+              className="mt-1 inline-flex w-fit items-center gap-1.5 rounded-md border border-neutral-300 bg-white px-2 py-1 text-[11px] text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              <ExternalLink className="size-3" aria-hidden />
+              {t('errors.action.openSystemSettings')}
+            </button>
           </Field>
         </Section>
 

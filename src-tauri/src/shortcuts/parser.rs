@@ -32,6 +32,14 @@ pub fn parse(accelerator: &str) -> AppResult<Shortcut> {
         }
 
         if let Some(modifier) = parse_modifier(token) {
+            // 동일 modifier bit 가 두 번 등장하면 사용자 입력 실수일 가능성이 크다.
+            // 예: `Cmd+CmdOrCtrl+T` 는 둘 다 SUPER 로 매핑되어 silent 하게 `Cmd+T` 와 동일
+            // 등록되었다. 이는 PRD §8.5 의 "유효성 검증" 정신에 어긋난다 — 거부한다.
+            if modifiers.contains(modifier) {
+                return Err(AppError::InvalidShortcut {
+                    input: accelerator.to_string(),
+                });
+            }
             modifiers |= modifier;
             continue;
         }
@@ -198,6 +206,29 @@ mod tests {
     fn rejects_two_keys_no_modifier() {
         assert!(matches!(
             parse("A+B"),
+            Err(AppError::InvalidShortcut { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_duplicate_modifier_aliases() {
+        // 코드리뷰 Low 1 회귀 — `Cmd` 와 `CmdOrCtrl` 는 둘 다 SUPER 비트.
+        assert!(matches!(
+            parse("Cmd+CmdOrCtrl+T"),
+            Err(AppError::InvalidShortcut { .. })
+        ));
+        // 같은 이름이 두 번 와도 거부.
+        assert!(matches!(
+            parse("Shift+Shift+T"),
+            Err(AppError::InvalidShortcut { .. })
+        ));
+        // Command 와 Cmd, Option 과 Alt 같은 동의어도 같은 비트라 거부.
+        assert!(matches!(
+            parse("Command+Cmd+T"),
+            Err(AppError::InvalidShortcut { .. })
+        ));
+        assert!(matches!(
+            parse("Alt+Option+T"),
             Err(AppError::InvalidShortcut { .. })
         ));
     }

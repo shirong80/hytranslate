@@ -24,6 +24,9 @@ pub enum AppError {
     #[error("network access blocked")]
     NetworkBlocked,
 
+    // PRD §11 의 표 변형 — 권한 producer 는 `AXIsProcessTrustedWithOptions` 등
+    // macOS 시스템 API 와 함께 Phase 5 onboarding 에서 도입된다. v1 의 단축키 권한
+    // 안내는 settings 패널의 persistent CTA 로 처리된다 (코드리뷰 Medium 1).
     #[error("macOS permission required for feature: {feature}")]
     PermissionRequired { feature: String },
 
