@@ -33,3 +33,9 @@ Thumbs.db
 # Logs
 logs/
 *.tsbuildinfo
+
+# Coding agents
+.claude/.DS_Store
+.claude/settings.local.json
+.claude/worktrees/
+CLAUDE.local.md
