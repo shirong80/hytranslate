@@ -1,4 +1,4 @@
-import { Check, Copy, Loader2, RefreshCcw } from 'lucide-react';
+import { Check, Copy, Loader2, RefreshCcw, Settings as SettingsIcon } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
 
 import { t } from '@i18n/ko';
@@ -11,7 +11,11 @@ import { useTranslationController } from '../use-translation-controller';
 import { InlineError } from './inline-error';
 import { SourceLanguageSelect } from './source-language-select';
 
-export function TranslationPanel() {
+interface TranslationPanelProps {
+  onOpenSettings?: () => void;
+}
+
+export function TranslationPanel({ onOpenSettings }: TranslationPanelProps = {}) {
   const sourceText = useTranslationStore((s) => s.sourceText);
   const sourceLanguage = useTranslationStore((s) => s.sourceLanguage);
   const output = useTranslationStore((s) => s.output);
@@ -67,7 +71,20 @@ export function TranslationPanel() {
         <h1 className="text-lg font-medium tracking-tight text-neutral-900 dark:text-neutral-100">
           {t('app.title')}
         </h1>
-        <ModelBadge model={model} status={status} durationMs={durationMs} />
+        <div className="flex items-center gap-2">
+          <ModelBadge model={model} status={status} durationMs={durationMs} />
+          {onOpenSettings ? (
+            <button
+              type="button"
+              onClick={onOpenSettings}
+              aria-label={t('nav.settings')}
+              className="inline-flex items-center gap-1 rounded-md border border-neutral-300 bg-white px-2 py-1 text-xs text-neutral-700 hover:border-neutral-400 hover:bg-neutral-50 dark:border-neutral-700 dark:bg-neutral-900 dark:text-neutral-300 dark:hover:bg-neutral-800"
+            >
+              <SettingsIcon className="size-3.5" aria-hidden />
+              {t('nav.settings')}
+            </button>
+          ) : null}
+        </div>
       </header>
 
       <div className="grid flex-1 grid-cols-1 gap-4 lg:grid-cols-2">

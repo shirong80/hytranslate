@@ -9,10 +9,10 @@ describe('translation store', () => {
     reset();
   });
 
-  it('starts idle with default Korean source language', () => {
+  it('starts idle with default Auto source language', () => {
     const state = useTranslationStore.getState();
     expect(state.status).toBe('idle');
-    expect(state.sourceLanguage).toBe('Korean');
+    expect(state.sourceLanguage).toBe('Auto');
     expect(state.output).toBe('');
     expect(state.error).toBeNull();
   });

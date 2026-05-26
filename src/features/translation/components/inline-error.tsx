@@ -1,31 +1,12 @@
 import { AlertTriangle, RefreshCcw } from 'lucide-react';
 
 import { t } from '@i18n/ko';
-import { type AppError } from '@lib/ipc/errors';
+import { messageFor, type AppError } from '@lib/ipc/errors';
 
 interface InlineErrorProps {
   error: AppError;
   onRetry?: () => void;
   onOpenOllamaDownload?: () => void;
-}
-
-function messageFor(error: AppError): string {
-  switch (error.kind) {
-    case 'InputTooLong':
-      return t('errors.InputTooLong', { limit: error.limit });
-    case 'ModelMissing':
-      return t('errors.ModelMissing');
-    case 'OllamaUnavailable':
-      return t('errors.OllamaUnavailable');
-    case 'OllamaNotRunning':
-      return t('errors.OllamaNotRunning');
-    case 'Cancelled':
-      return t('errors.Cancelled');
-    case 'NetworkBlocked':
-      return t('errors.NetworkBlocked');
-    case 'Internal':
-      return t('errors.Internal');
-  }
 }
 
 export function InlineError({ error, onRetry, onOpenOllamaDownload }: InlineErrorProps) {

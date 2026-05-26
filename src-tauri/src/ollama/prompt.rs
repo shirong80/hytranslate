@@ -55,6 +55,14 @@ mod tests {
     }
 
     #[test]
+    fn auto_falls_back_to_generic_chinese_label() {
+        // PRD §8.2 — detector 가 결정을 내리지 못해 Auto 가 prompt 까지 흘러올 때
+        // generic `Chinese` 라벨로 호출한다.
+        let prompt = build_prompt(SourceLanguage::Auto, "人山人海");
+        assert!(prompt.starts_with("Translate the following segment from Chinese into English."));
+    }
+
+    #[test]
     fn does_not_strip_or_normalize_source_text() {
         let messy = "  spaced\n\nmulti\tline  ";
         let prompt = build_prompt(SourceLanguage::Korean, messy);

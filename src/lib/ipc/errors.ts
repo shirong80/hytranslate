@@ -1,3 +1,5 @@
+import { t } from '@i18n/ko';
+
 export type AppError =
   | { kind: 'OllamaUnavailable' }
   | { kind: 'OllamaNotRunning' }
@@ -8,6 +10,29 @@ export type AppError =
   | { kind: 'Internal'; message: string };
 
 export type AppErrorKind = AppError['kind'];
+
+/**
+ * AppError 의 사용자 노출 한국어 메시지. ko.ts 키와 변수치환 규칙을 한 곳에 모은다.
+ * Phase 1 의 inline-error 내부 헬퍼를 Phase 2 에서 settings 패널 등도 재사용할 수 있게 승격.
+ */
+export function messageFor(error: AppError): string {
+  switch (error.kind) {
+    case 'InputTooLong':
+      return t('errors.InputTooLong', { limit: error.limit });
+    case 'ModelMissing':
+      return t('errors.ModelMissing');
+    case 'OllamaUnavailable':
+      return t('errors.OllamaUnavailable');
+    case 'OllamaNotRunning':
+      return t('errors.OllamaNotRunning');
+    case 'Cancelled':
+      return t('errors.Cancelled');
+    case 'NetworkBlocked':
+      return t('errors.NetworkBlocked');
+    case 'Internal':
+      return t('errors.Internal');
+  }
+}
 
 function hasStringField(value: object, field: string): boolean {
   return typeof (value as Record<string, unknown>)[field] === 'string';

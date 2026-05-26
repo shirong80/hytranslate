@@ -19,6 +19,8 @@ export interface TranslationState {
 export interface TranslationActions {
   setSourceText: (text: string) => void;
   setSourceLanguage: (lang: SourceLanguage) => void;
+  /** Settings 가 활성 모델을 푸시할 때 호출. translation store 가 settings 를 import 하지 않도록 외부 주입 패턴. */
+  setModel: (model: string) => void;
   beginRequest: (requestId: string) => void;
   markStarted: (payload: { requestId: string; startedAtMs: number }) => void;
   appendChunk: (payload: { requestId: string; delta: string }) => void;
@@ -38,7 +40,7 @@ export interface TranslationActions {
 
 const initialState: TranslationState = {
   sourceText: '',
-  sourceLanguage: 'Korean',
+  sourceLanguage: 'Auto',
   model: DEFAULT_MODEL,
   output: '',
   status: 'idle',
@@ -57,6 +59,10 @@ export const useTranslationStore = create<TranslationState & TranslationActions>
 
   setSourceLanguage: (lang) => {
     set({ sourceLanguage: lang });
+  },
+
+  setModel: (model) => {
+    set({ model });
   },
 
   beginRequest: (requestId) => {

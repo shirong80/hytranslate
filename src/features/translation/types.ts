@@ -1,4 +1,10 @@
-export const SOURCE_LANGUAGES = ['Korean', 'ChineseSimplified', 'ChineseTraditional'] as const;
+// dropdown 순서: Auto 가 첫 항목 — Phase 2 기본값.
+export const SOURCE_LANGUAGES = [
+  'Auto',
+  'Korean',
+  'ChineseSimplified',
+  'ChineseTraditional',
+] as const;
 export type SourceLanguage = (typeof SOURCE_LANGUAGES)[number];
 
 export type TranslationStatus =

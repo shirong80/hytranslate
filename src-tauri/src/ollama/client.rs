@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::errors::{AppError, AppResult};
 use crate::language::SourceLanguage;
+use crate::ollama::endpoint::is_endpoint_allowed;
 use crate::ollama::prompt::{build_prompt, num_predict_for};
 
 const GENERATE_PATH: &str = "/api/generate";
@@ -22,7 +23,6 @@ const GENERATE_PATH: &str = "/api/generate";
 #[derive(Debug, Clone)]
 pub struct OllamaClient {
     http: Client,
-    base_url: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -55,23 +55,23 @@ pub enum ChunkFlow {
 }
 
 impl OllamaClient {
-    pub fn new(endpoint: impl Into<String>) -> AppResult<Self> {
+    pub fn new() -> AppResult<Self> {
         let http = Client::builder()
             .pool_idle_timeout(Duration::from_secs(30))
             .build()
             .map_err(AppError::from)?;
-        Ok(Self {
-            http,
-            base_url: endpoint.into(),
-        })
+        Ok(Self { http })
     }
 
     /// `model` 로 streaming generate 호출. `on_chunk` 는 `done:false` 인 chunk 의
     /// `response` delta 마다 호출된다. `cancel` 이 cancelled 이면 worker 는 즉시 중단한다.
     ///
+    /// `base_url` 은 Settings 에서 받아 매 호출 시 전달한다 — endpoint 변경 시
+    /// client 를 재생성하지 않아도 된다. 호출자가 `is_endpoint_allowed` 로 사전 검증해야 한다.
     /// 반환값은 누적된 full text. 호출자가 `duration_ms` 와 함께 `translation:completed` 를 emit 한다.
     pub async fn generate_stream<F>(
         &self,
+        base_url: &str,
         model: &str,
         source_language: SourceLanguage,
         source_text: &str,
@@ -81,6 +81,10 @@ impl OllamaClient {
     where
         F: FnMut(&str) -> ChunkFlow,
     {
+        if !is_endpoint_allowed(base_url) {
+            return Err(AppError::NetworkBlocked);
+        }
+
         let body = GenerateRequest {
             model,
             prompt: build_prompt(source_language, source_text),
@@ -92,7 +96,7 @@ impl OllamaClient {
             },
         };
 
-        let url = format!("{}{}", self.base_url.trim_end_matches('/'), GENERATE_PATH);
+        let url = format!("{}{}", base_url.trim_end_matches('/'), GENERATE_PATH);
         let response = tokio::select! {
             _ = cancel.cancelled() => return Err(AppError::Cancelled),
             res = self.http.post(&url).json(&body).send() => res.map_err(AppError::from)?,
@@ -218,11 +222,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let mut seen: Vec<String> = Vec::new();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "test-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -250,11 +255,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let token_for_cb = cancel.clone();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "test-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -277,10 +283,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "test-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -300,10 +307,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "ghost-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -328,10 +336,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "test-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -353,10 +362,11 @@ mod tests {
             .mount(&server)
             .await;
 
-        let client = OllamaClient::new(server.uri()).unwrap();
+        let client = OllamaClient::new().unwrap();
         let cancel = CancellationToken::new();
         let result = client
             .generate_stream(
+                &server.uri(),
                 "test-model",
                 SourceLanguage::Korean,
                 "안녕",
@@ -365,6 +375,23 @@ mod tests {
             )
             .await;
         assert!(matches!(result, Err(AppError::Internal { .. })));
+    }
+
+    #[tokio::test]
+    async fn non_loopback_endpoint_returns_network_blocked() {
+        let client = OllamaClient::new().unwrap();
+        let cancel = CancellationToken::new();
+        let result = client
+            .generate_stream(
+                "http://example.com:11434",
+                "test-model",
+                SourceLanguage::Korean,
+                "안녕",
+                &cancel,
+                |_| ChunkFlow::Continue,
+            )
+            .await;
+        assert!(matches!(result, Err(AppError::NetworkBlocked)));
     }
 
     #[test]

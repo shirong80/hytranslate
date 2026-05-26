@@ -18,8 +18,9 @@ use crate::events::{
     TRANSLATION_CANCELLED, TRANSLATION_CHUNK, TRANSLATION_COMPLETED, TRANSLATION_ERROR,
     TRANSLATION_STARTED,
 };
-use crate::language::SourceLanguage;
+use crate::language::{self, SourceLanguage};
 use crate::ollama::{ChunkFlow, OllamaClient};
+use crate::settings::SettingsStore;
 
 pub const MAIN_INPUT_LIMIT: usize = 30_000;
 
@@ -121,6 +122,7 @@ pub async fn translate_stream<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     registry: tauri::State<'_, Arc<TranslationRegistry>>,
     client: tauri::State<'_, OllamaClient>,
+    settings: tauri::State<'_, Arc<SettingsStore>>,
     request: TranslateRequest,
 ) -> AppResult<()> {
     if request.source_text.chars().count() > MAIN_INPUT_LIMIT {
@@ -130,15 +132,38 @@ pub async fn translate_stream<R: tauri::Runtime>(
     }
     validate_request_id(&request.request_id)?;
 
+    // PRD §8.2 — Auto 입력은 backend 가 즉시 detect 한다. UI 가 다시 보내지 않으므로
+    // race 가 없다. detector 가 모호하다고 결정한 경우에도 `Auto` 그대로 두어
+    // prompt 가 generic `Chinese` 라벨을 쓰게 한다.
+    let resolved_language = if request.source_language == SourceLanguage::Auto {
+        language::detect(&request.source_text).language
+    } else {
+        request.source_language
+    };
+
+    let endpoint = settings.get().ollama_endpoint;
+
     let token = CancellationToken::new();
     registry.insert(request.request_id.clone(), token.clone());
 
     let app_handle = app.clone();
     let client = (*client).clone();
     let registry = registry.inner().clone();
+    let resolved_request = TranslateRequest {
+        source_language: resolved_language,
+        ..request
+    };
 
     tokio::spawn(async move {
-        run_translation(app_handle, client, registry, request, token).await;
+        run_translation(
+            app_handle,
+            client,
+            registry,
+            endpoint,
+            resolved_request,
+            token,
+        )
+        .await;
     });
 
     Ok(())
@@ -158,6 +183,7 @@ async fn run_translation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     client: OllamaClient,
     registry: Arc<TranslationRegistry>,
+    endpoint: String,
     request: TranslateRequest,
     token: CancellationToken,
 ) {
@@ -187,6 +213,7 @@ async fn run_translation<R: tauri::Runtime>(
 
     let result = client
         .generate_stream(
+            &endpoint,
             &model,
             request.source_language,
             &request.source_text,

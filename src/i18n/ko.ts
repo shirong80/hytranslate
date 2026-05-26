@@ -19,11 +19,37 @@ export const ko = Object.freeze({
   'translation.status.duration': '{ms}ms',
 
   'translation.sourceLanguage.label': '입력 언어',
+  'translation.sourceLanguage.auto': '자동 감지',
   'translation.sourceLanguage.korean': '한국어',
   'translation.sourceLanguage.chineseSimplified': '중국어 (간체)',
   'translation.sourceLanguage.chineseTraditional': '중국어 (번체)',
+  'translation.sourceLanguage.detected.korean': '자동: 한국어',
+  'translation.sourceLanguage.detected.chineseSimplified': '자동: 중국어 (간체)',
+  'translation.sourceLanguage.detected.chineseTraditional': '자동: 중국어 (번체)',
+  'translation.sourceLanguage.detected.unknown': '자동: 결정 안 됨',
 
   'translation.model.label': '모델',
+
+  'nav.translate': '번역',
+  'nav.settings': '설정',
+  'nav.back': '뒤로',
+
+  'settings.title': '설정',
+  'settings.section.translation': '번역',
+  'settings.section.appearance': '모양',
+  'settings.activeModel.label': '활성 모델',
+  'settings.activeModel.hy7b': 'Hy-MT2 7B (권장)',
+  'settings.activeModel.hy1_8b': 'Hy-MT2 1.8B (저메모리)',
+  'settings.ollamaEndpoint.label': 'Ollama endpoint',
+  'settings.ollamaEndpoint.help':
+    'localhost / 127.0.0.1 만 허용됩니다. 외부 호스트는 저장되지 않습니다.',
+  'settings.theme.label': '테마',
+  'settings.theme.system': '시스템',
+  'settings.theme.light': '라이트',
+  'settings.theme.dark': '다크',
+  'settings.action.save': '저장',
+  'settings.action.saving': '저장 중…',
+  'settings.action.saved': '저장됨',
 
   'errors.OllamaUnavailable':
     'Ollama가 설치되어 있지 않습니다. HyTranslate Mac은 로컬 번역을 위해 Ollama가 필요합니다.',
