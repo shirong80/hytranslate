@@ -9,10 +9,15 @@ mod positioning;
 
 use serde::Serialize;
 use tauri::{
+    image::Image,
     menu::{MenuBuilder, MenuItemBuilder},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
     Emitter, Manager, PhysicalPosition, Runtime,
 };
+
+// 메뉴바 트레이는 macOS 가 시스템 강조색으로 틴팅하도록 흑색 단일 이미지를 템플릿으로 등록한다.
+// Retina 디스플레이에서 선명하게 표시되도록 @2x(44×44) 자원을 기본으로 사용한다.
+const MENUBAR_ICON_PNG: &[u8] = include_bytes!("../../icons/menubar@2x.png");
 
 use crate::errors::{AppError, AppResult};
 use crate::events::{MENUBAR_CLOSED, MENUBAR_OPENED, NAV_REQUEST};
@@ -35,10 +40,7 @@ struct NavRequestPayload {
 }
 
 pub fn install<R: Runtime>(app: &tauri::App<R>) -> AppResult<()> {
-    let icon = app
-        .default_window_icon()
-        .ok_or_else(|| AppError::internal("default window icon missing"))?
-        .clone();
+    let icon = Image::from_bytes(MENUBAR_ICON_PNG).map_err(AppError::internal)?;
 
     let menu = MenuBuilder::new(app)
         .item(
