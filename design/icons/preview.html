@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>HyTranslate · Icon System</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,300;9..144,400;9..144,500;9..144,600&family=Inter+Tight:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --paper: #F4EFE5;
+      --paper-soft: #EDE7DA;
+      --ink: #14171F;
+      --ink-soft: #3A3F4D;
+      --ink-mute: #6E7282;
+      --rule: #DCD4C2;
+      --accent: #2C4670;
+      --accent-soft: #5778A0;
+      --cream: #FCF8EC;
+
+      --dock-base: #1B2C4E;
+      --dock-mid: #2C4670;
+      --dock-hi: #5778A0;
+    }
+
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      font-family: 'Inter Tight', -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--paper);
+      color: var(--ink);
+      font-size: 15px;
+      line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+      letter-spacing: -0.005em;
+      background-image:
+        radial-gradient(circle at 12% 8%, rgba(44,70,112,0.06), transparent 45%),
+        radial-gradient(circle at 88% 96%, rgba(87,120,160,0.08), transparent 50%);
+    }
+
+    .page {
+      max-width: 1180px;
+      margin: 0 auto;
+      padding: 88px 56px 120px;
+    }
+
+    /* ─── Top metadata bar ─────────────────────────────── */
+    .meta-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      color: var(--ink-mute);
+      text-transform: uppercase;
+      letter-spacing: 0.12em;
+      padding-bottom: 16px;
+      border-bottom: 1px solid var(--rule);
+      margin-bottom: 88px;
+    }
+    .meta-bar .lhs { display: flex; gap: 28px; }
+    .meta-bar .lhs span::before { content: '·'; margin-right: 12px; color: var(--rule); }
+    .meta-bar .lhs span:first-child::before { content: none; }
+
+    /* ─── Hero ─────────────────────────────────────────── */
+    .hero {
+      display: grid;
+      grid-template-columns: 320px 1fr;
+      gap: 80px;
+      align-items: center;
+      padding: 24px 0 88px;
+    }
+    .hero-icon {
+      width: 256px;
+      height: 256px;
+      filter: drop-shadow(0 30px 60px rgba(27,44,78,0.25))
+              drop-shadow(0 8px 20px rgba(27,44,78,0.18));
+    }
+    .hero-icon img { width: 100%; height: 100%; display: block; }
+
+    .hero-kicker {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.18em;
+      text-transform: uppercase;
+      color: var(--accent);
+      margin: 0 0 18px;
+    }
+    .hero h1 {
+      font-family: 'Fraunces', Georgia, serif;
+      font-weight: 400;
+      font-size: clamp(48px, 6vw, 86px);
+      line-height: 0.95;
+      letter-spacing: -0.025em;
+      margin: 0 0 28px;
+      color: var(--ink);
+      font-variation-settings: "opsz" 144;
+    }
+    .hero h1 em {
+      font-style: italic;
+      font-weight: 300;
+      color: var(--accent);
+    }
+    .hero .lede {
+      font-size: 18px;
+      line-height: 1.55;
+      color: var(--ink-soft);
+      max-width: 520px;
+      margin: 0;
+    }
+
+    /* ─── Section heading ──────────────────────────────── */
+    .section { padding: 64px 0; }
+    .section + .section { border-top: 1px solid var(--rule); }
+    .section-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 48px;
+      gap: 40px;
+    }
+    .section-head h2 {
+      font-family: 'Fraunces', Georgia, serif;
+      font-weight: 400;
+      font-size: 36px;
+      line-height: 1.05;
+      letter-spacing: -0.02em;
+      margin: 0;
+      color: var(--ink);
+      font-variation-settings: "opsz" 96;
+    }
+    .section-head .num {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.14em;
+      color: var(--ink-mute);
+      text-transform: uppercase;
+    }
+    .section-head p {
+      font-size: 14px;
+      color: var(--ink-soft);
+      max-width: 380px;
+      margin: 0;
+      text-align: right;
+    }
+
+    /* ─── macOS menu bar mockup ────────────────────────── */
+    .macos-chrome {
+      border-radius: 16px;
+      overflow: hidden;
+      box-shadow: 0 28px 80px rgba(20,23,31,0.18),
+                  0 4px 12px rgba(20,23,31,0.08);
+      background: linear-gradient(180deg, #E8DFCC 0%, #D9CFB6 100%);
+    }
+
+    .menubar {
+      height: 28px;
+      backdrop-filter: blur(20px);
+      background: rgba(255,255,255,0.55);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      font-size: 13px;
+      color: #1A1A1A;
+      border-bottom: 0.5px solid rgba(0,0,0,0.12);
+    }
+    .menubar .left { display: flex; align-items: center; gap: 18px; }
+    .menubar .right { display: flex; align-items: center; gap: 14px; }
+    .menubar .apple {
+      width: 13px; height: 13px;
+      background: #1A1A1A;
+      -webkit-mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 384 512'><path d='M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z'/></svg>") center/contain no-repeat;
+      mask: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 384 512'><path d='M318.7 268.7c-.2-36.7 16.4-64.4 50-84.8-18.8-26.9-47.2-41.7-84.7-44.6-35.5-2.8-74.3 20.7-88.5 20.7-15 0-49.4-19.7-76.4-19.7C63.3 141.2 4 184.8 4 273.5q0 39.3 14.4 81.2c12.8 36.7 59 126.7 107.2 125.2 25.2-.6 43-17.9 75.8-17.9 31.8 0 48.3 17.9 76.4 17.9 48.6-.7 90.4-82.5 102.6-119.3-65.2-30.7-61.7-90-61.7-91.9zm-56.6-164.2c27.3-32.4 24.8-61.9 24-72.5-24.1 1.4-52 16.4-67.9 34.9-17.5 19.8-27.8 44.3-25.6 71.9 26.1 2 49.9-11.4 69.5-34.3z'/></svg>") center/contain no-repeat;
+    }
+    .menubar .app-name { font-weight: 600; }
+    .menubar .menu-item { color: #1A1A1A; }
+    .menubar .right .mb-icon {
+      width: 18px; height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+    }
+    .menubar .right .mb-icon img { width: 18px; height: 18px; opacity: 0.85; }
+    .menubar .right .mb-icon.featured { padding: 2px 4px; border-radius: 4px; background: rgba(44,70,112,0.10); }
+    .menubar .right .time { font-variant-numeric: tabular-nums; font-weight: 500; }
+
+    /* desktop area */
+    .desktop {
+      height: 320px;
+      background: linear-gradient(160deg, #BBA683 0%, #8C7A5C 45%, #5A4E3C 100%);
+      position: relative;
+      display: flex;
+      align-items: flex-end;
+      justify-content: center;
+      padding-bottom: 14px;
+      overflow: hidden;
+    }
+    .desktop::before {
+      content: '';
+      position: absolute;
+      inset: 0;
+      background:
+        radial-gradient(ellipse 70% 50% at 30% 30%, rgba(255,231,191,0.35), transparent 60%),
+        radial-gradient(ellipse 80% 60% at 80% 90%, rgba(60,40,20,0.4), transparent 50%);
+    }
+
+    /* dock */
+    .dock {
+      position: relative;
+      background: rgba(255,255,255,0.32);
+      backdrop-filter: blur(28px);
+      border: 0.5px solid rgba(255,255,255,0.4);
+      border-radius: 22px;
+      padding: 10px 14px;
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      box-shadow: 0 18px 40px rgba(0,0,0,0.28), inset 0 1px 0 rgba(255,255,255,0.5);
+    }
+    .dock-app {
+      width: 56px;
+      height: 56px;
+      border-radius: 13px;
+      box-shadow: 0 4px 10px rgba(0,0,0,0.15);
+      transition: transform 0.22s cubic-bezier(.2,.7,.3,1);
+    }
+    .dock-app:hover { transform: translateY(-12px) scale(1.18); }
+    .dock-app--hytranslate { box-shadow: 0 6px 18px rgba(27,44,78,0.45); }
+    .dock-app--hytranslate img { width: 100%; height: 100%; display: block; border-radius: 13px; }
+
+    /* placeholder icons (inline SVG via background) */
+    .ph-mail   { background: linear-gradient(135deg, #4FB1FB, #1D6FE0); }
+    .ph-finder { background: linear-gradient(135deg, #5DC2F5 0%, #3A8FE0 55%, #1F6CBF 100%); position: relative; }
+    .ph-finder::before {
+      content: '';
+      position: absolute; inset: 16px;
+      background:
+        radial-gradient(circle at 35% 38%, #fff 0 3px, transparent 3.5px),
+        radial-gradient(circle at 65% 38%, #fff 0 3px, transparent 3.5px);
+    }
+    .ph-music  { background: linear-gradient(160deg, #FB6B98, #C72558); }
+    .ph-photos { background: conic-gradient(from 220deg, #F5B1FF, #FFC97A, #B5F0A8, #87CFFB, #C79CFF, #F5B1FF); }
+    .ph-notes  { background: linear-gradient(180deg, #FFF1A8, #F2C04A); position: relative; }
+    .ph-notes::before { content:''; position:absolute; left:14px; right:14px; top:18px; height:1px; background: rgba(0,0,0,0.18); box-shadow: 0 6px 0 rgba(0,0,0,0.18), 0 12px 0 rgba(0,0,0,0.18); }
+    .ph-terminal { background: linear-gradient(160deg, #2E2E2E, #0E0E0E); position: relative; }
+    .ph-terminal::before { content: '>_'; position: absolute; inset: 0; display: grid; place-items: center; color: #A8E69B; font-family: 'JetBrains Mono', monospace; font-size: 14px; font-weight: 500; }
+
+    /* divider line (dock separator) */
+    .dock-divider {
+      width: 1px;
+      height: 36px;
+      background: rgba(255,255,255,0.4);
+      margin: 0 4px;
+    }
+
+    /* ─── Anatomy section ──────────────────────────────── */
+    .anatomy {
+      display: grid;
+      grid-template-columns: 1.1fr 1fr;
+      gap: 80px;
+      align-items: center;
+    }
+    .anatomy-canvas {
+      position: relative;
+      aspect-ratio: 1 / 1;
+      background: var(--paper-soft);
+      border: 1px solid var(--rule);
+      border-radius: 4px;
+      padding: 48px;
+    }
+    .anatomy-canvas .grid {
+      position: absolute; inset: 48px;
+      background-image:
+        linear-gradient(rgba(20,23,31,0.06) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(20,23,31,0.06) 1px, transparent 1px);
+      background-size: calc(100% / 16) calc(100% / 16);
+      pointer-events: none;
+    }
+    .anatomy-canvas .crosshair-h,
+    .anatomy-canvas .crosshair-v {
+      position: absolute; background: rgba(44,70,112,0.35);
+    }
+    .anatomy-canvas .crosshair-h { left: 48px; right: 48px; top: 50%; height: 1px; }
+    .anatomy-canvas .crosshair-v { top: 48px; bottom: 48px; left: 50%; width: 1px; }
+    .anatomy-canvas img {
+      position: relative;
+      width: 100%; height: 100%; display: block;
+      filter: drop-shadow(0 12px 28px rgba(27,44,78,0.18));
+    }
+    .anatomy-canvas .tick {
+      position: absolute;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.1em;
+      color: var(--ink-mute);
+      text-transform: uppercase;
+    }
+    .anatomy-canvas .tick.tl { top: 16px; left: 16px; }
+    .anatomy-canvas .tick.tr { top: 16px; right: 16px; }
+    .anatomy-canvas .tick.bl { bottom: 16px; left: 16px; }
+    .anatomy-canvas .tick.br { bottom: 16px; right: 16px; }
+
+    .anatomy-notes h3 {
+      font-family: 'Fraunces', serif;
+      font-weight: 500;
+      font-size: 22px;
+      letter-spacing: -0.01em;
+      margin: 0 0 14px;
+    }
+    .anatomy-notes p {
+      color: var(--ink-soft);
+      margin: 0 0 28px;
+      max-width: 460px;
+    }
+    .anatomy-notes p em { font-family: 'Fraunces', serif; font-style: italic; color: var(--accent); }
+    .spec-list { list-style: none; padding: 0; margin: 0; border-top: 1px solid var(--rule); }
+    .spec-list li {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      gap: 24px;
+      padding: 14px 0;
+      border-bottom: 1px solid var(--rule);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 12px;
+    }
+    .spec-list li .key { color: var(--ink-mute); text-transform: uppercase; letter-spacing: 0.1em; }
+    .spec-list li .val { color: var(--ink); }
+
+    /* ─── Sizes section ────────────────────────────────── */
+    .sizes {
+      display: flex;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 24px;
+      padding: 32px 0 8px;
+    }
+    .size-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 16px;
+    }
+    .size-stack .label {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 10px;
+      letter-spacing: 0.12em;
+      color: var(--ink-mute);
+      text-transform: uppercase;
+    }
+    .size-stack img { display: block; filter: drop-shadow(0 8px 20px rgba(27,44,78,0.18)); }
+
+    /* ─── Menu bar variants ────────────────────────────── */
+    .mb-variants {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 32px;
+    }
+    .mb-card {
+      border-radius: 14px;
+      overflow: hidden;
+      border: 1px solid var(--rule);
+    }
+    .mb-card .head {
+      padding: 14px 20px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      text-transform: uppercase;
+      color: var(--ink-mute);
+      border-bottom: 1px solid var(--rule);
+      background: var(--paper-soft);
+    }
+    .mb-card .stage {
+      padding: 28px 24px;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Text', sans-serif;
+      font-size: 13px;
+    }
+    .mb-card.light .stage { background: rgba(255,255,255,0.75); color: #1A1A1A; }
+    .mb-card.dark .stage { background: #1A1A1A; color: #F2F2F2; }
+    .mb-card .stage img { width: 22px; height: 22px; opacity: 0.92; }
+    .mb-card .stage .item { display: inline-flex; align-items: center; gap: 6px; opacity: 0.8; }
+    .mb-card .stage .item:first-child { opacity: 1; }
+    .mb-card .stage .sep { width: 1px; height: 14px; background: currentColor; opacity: 0.18; }
+    .mb-card .stage .glyph {
+      width: 16px; height: 16px;
+      display: inline-block;
+      -webkit-mask: var(--mask) center/contain no-repeat;
+              mask: var(--mask) center/contain no-repeat;
+      background: currentColor;
+      opacity: 0.85;
+    }
+
+    /* ─── Color tokens ─────────────────────────────────── */
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 20px;
+    }
+    .swatch {
+      background: var(--paper);
+      border: 1px solid var(--rule);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .swatch .chip {
+      height: 110px;
+      position: relative;
+    }
+    .swatch .chip.dock-bg     { background: linear-gradient(135deg, #1B2C4E 0%, #2C4670 55%, #5778A0 100%); }
+    .swatch .chip.dock-base   { background: #1B2C4E; }
+    .swatch .chip.dock-mid    { background: #2C4670; }
+    .swatch .chip.mark        { background: linear-gradient(180deg, #FCF8EC 0%, #EFE6D0 100%); }
+    .swatch .meta {
+      padding: 14px 16px 16px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.04em;
+    }
+    .swatch .meta .name { color: var(--ink); font-weight: 500; display: block; margin-bottom: 4px; text-transform: uppercase; letter-spacing: 0.1em; font-size: 10px; }
+    .swatch .meta .hex  { color: var(--ink-mute); }
+
+    /* ─── Footer ───────────────────────────────────────── */
+    .colophon {
+      margin-top: 80px;
+      padding-top: 32px;
+      border-top: 1px solid var(--rule);
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 11px;
+      letter-spacing: 0.1em;
+      color: var(--ink-mute);
+      text-transform: uppercase;
+    }
+
+    /* ─── Responsive ───────────────────────────────────── */
+    @media (max-width: 900px) {
+      .page { padding: 56px 28px 80px; }
+      .hero { grid-template-columns: 1fr; gap: 40px; }
+      .anatomy { grid-template-columns: 1fr; gap: 40px; }
+      .mb-variants { grid-template-columns: 1fr; }
+      .swatches { grid-template-columns: repeat(2, 1fr); }
+      .sizes { flex-wrap: wrap; }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+
+    <div class="meta-bar">
+      <div class="lhs">
+        <span>HyTranslate Mac</span>
+        <span>Icon System</span>
+        <span>v1.0</span>
+      </div>
+      <div>2026 · Local-first translation</div>
+    </div>
+
+    <!-- ─── Hero ─────────────────────────────────────── -->
+    <section class="hero">
+      <div class="hero-icon">
+        <img src="hytranslate-dock.svg" alt="HyTranslate Mac dock icon" />
+      </div>
+      <div>
+        <p class="hero-kicker">Mark · Dock · Menu Bar</p>
+        <h1>Direction<br/><em>has a shape.</em></h1>
+        <p class="lede">
+          Two pillars and an arrow — a geometric mark that reads as the letter
+          H and the act of translation in a single gesture. Calm enough for the
+          Dock; legible at the smallest menu-bar tile.
+        </p>
+      </div>
+    </section>
+
+    <!-- ─── Section 01 — In context ──────────────────── -->
+    <section class="section">
+      <div class="section-head">
+        <h2>In&nbsp;context.</h2>
+        <span class="num">01 · macOS chrome</span>
+        <p>A full top-of-screen menu bar and a floating dock — the only two places this app will ever be glimpsed at a distance.</p>
+      </div>
+
+      <div class="macos-chrome">
+        <div class="menubar">
+          <div class="left">
+            <span class="apple"></span>
+            <span class="app-name">HyTranslate</span>
+            <span class="menu-item">파일</span>
+            <span class="menu-item">편집</span>
+            <span class="menu-item">보기</span>
+            <span class="menu-item">번역</span>
+            <span class="menu-item">윈도우</span>
+            <span class="menu-item">도움말</span>
+          </div>
+          <div class="right">
+            <span class="mb-icon featured" title="HyTranslate"><img src="hytranslate-menubar.svg" alt="HyTranslate"/></span>
+            <span class="mb-icon" title="Wi-Fi">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 12.2a1.3 1.3 0 1 0 0 2.6 1.3 1.3 0 0 0 0-2.6Zm0-3.6a3.6 3.6 0 0 1 2.55 1.05.5.5 0 0 0 .7-.71 4.6 4.6 0 0 0-6.5 0 .5.5 0 1 0 .7.7A3.6 3.6 0 0 1 8 8.6Zm0-3.5a7.1 7.1 0 0 1 5.05 2.09.5.5 0 1 0 .7-.71 8.1 8.1 0 0 0-11.5 0 .5.5 0 0 0 .7.7A7.1 7.1 0 0 1 8 5.1Zm0-3.6c3.41 0 6.49 1.4 8.7 3.62a.5.5 0 0 0 .7-.71A13.6 13.6 0 0 0 8 .5 13.6 13.6 0 0 0-1.4 4.41a.5.5 0 1 0 .7.71A12.6 12.6 0 0 1 8 1.5Z"/></svg>
+            </span>
+            <span class="mb-icon" title="Battery">
+              <svg width="22" height="14" viewBox="0 0 22 14" fill="none"><rect x="0.5" y="0.5" width="18" height="13" rx="3" stroke="currentColor"/><rect x="2" y="2" width="14" height="10" rx="1.5" fill="currentColor"/><rect x="19.5" y="4.5" width="2" height="5" rx="0.8" fill="currentColor"/></svg>
+            </span>
+            <span class="time">화 5월 28 10:42</span>
+          </div>
+        </div>
+
+        <div class="desktop">
+          <div class="dock">
+            <div class="dock-app ph-finder"></div>
+            <div class="dock-app ph-mail"></div>
+            <div class="dock-app ph-music"></div>
+            <div class="dock-app ph-photos"></div>
+            <div class="dock-app ph-notes"></div>
+            <div class="dock-divider"></div>
+            <div class="dock-app dock-app--hytranslate"><img src="hytranslate-dock.svg" alt="HyTranslate"/></div>
+            <div class="dock-divider"></div>
+            <div class="dock-app ph-terminal"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 02 — Anatomy ─────────────────────── -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Anatomy.</h2>
+        <span class="num">02 · Construction</span>
+        <p>Built on a 16×16 grid, the mark is two columns linked by a centred arrow. Nothing decorative — every stroke is doing work.</p>
+      </div>
+
+      <div class="anatomy">
+        <div class="anatomy-canvas">
+          <div class="grid"></div>
+          <div class="crosshair-h"></div>
+          <div class="crosshair-v"></div>
+          <img src="hytranslate-dock.svg" alt="" />
+          <span class="tick tl">0,0</span>
+          <span class="tick tr">1024,0</span>
+          <span class="tick bl">0,1024</span>
+          <span class="tick br">1024,1024</span>
+        </div>
+
+        <div class="anatomy-notes">
+          <h3>One gesture, two readings.</h3>
+          <p>
+            The crossbar is an <em>arrow</em>, not a line — pointing from the
+            source pillar toward the destination pillar. Read fast, it's an H.
+            Read again, it's translation in motion.
+          </p>
+          <ul class="spec-list">
+            <li><span class="key">Canvas</span><span class="val">1024 × 1024 squircle, r228</span></li>
+            <li><span class="key">Pillar</span><span class="val">76w × 432h, radius 8</span></li>
+            <li><span class="key">Arrow stem</span><span class="val">288 × 60, centred y=512</span></li>
+            <li><span class="key">Arrowhead</span><span class="val">84 wide, 140 tall taper</span></li>
+            <li><span class="key">Optical centre</span><span class="val">+0 px (mathematical)</span></li>
+            <li><span class="key">Tilt</span><span class="val">0° · zero rotation</span></li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 03 — Scale ───────────────────────── -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Scale.</h2>
+        <span class="num">03 · Render sizes</span>
+        <p>The shape was tuned so the arrowhead survives at 16px and the squircle reads at 1024px without retouching.</p>
+      </div>
+
+      <div class="sizes">
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="256" height="256" alt=""/>
+          <span class="label">256 px</span>
+        </div>
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="128" height="128" alt=""/>
+          <span class="label">128 px</span>
+        </div>
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="64" height="64" alt=""/>
+          <span class="label">64 px</span>
+        </div>
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="40" height="40" alt=""/>
+          <span class="label">40 px</span>
+        </div>
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="24" height="24" alt=""/>
+          <span class="label">24 px</span>
+        </div>
+        <div class="size-stack">
+          <img src="hytranslate-dock.svg" width="16" height="16" alt=""/>
+          <span class="label">16 px</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 04 — Menu bar template ───────────── -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Menu bar.</h2>
+        <span class="num">04 · Template image</span>
+        <p>One mark, two tints. Pure black for the light bar; pure white for the dark bar. No colour — the system handles that.</p>
+      </div>
+
+      <div class="mb-variants">
+        <div class="mb-card light">
+          <div class="head"><span>Light Menu Bar</span><span>22 × 22 · Template</span></div>
+          <div class="stage">
+            <span class="item"><img src="hytranslate-menubar.svg" alt="HyTranslate"/>HyTranslate</span>
+            <span class="sep"></span>
+            <span class="item">📡 Wi-Fi</span>
+            <span class="sep"></span>
+            <span class="item">10:42</span>
+          </div>
+        </div>
+        <div class="mb-card dark">
+          <div class="head"><span>Dark Menu Bar</span><span>22 × 22 · Template</span></div>
+          <div class="stage">
+            <span class="item"><img src="hytranslate-menubar-light.svg" alt="HyTranslate"/>HyTranslate</span>
+            <span class="sep"></span>
+            <span class="item">📡 Wi-Fi</span>
+            <span class="sep"></span>
+            <span class="item">10:42</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ─── Section 05 — Tokens ──────────────────────── -->
+    <section class="section">
+      <div class="section-head">
+        <h2>Tokens.</h2>
+        <span class="num">05 · Colour palette</span>
+        <p>A deep cobalt gradient anchors the brand; warm cream gives the mark a quiet, paper-like presence against the cool ground.</p>
+      </div>
+
+      <div class="swatches">
+        <div class="swatch">
+          <div class="chip dock-bg"></div>
+          <div class="meta"><span class="name">Dock Gradient</span><span class="hex">#1B2C4E → #5778A0</span></div>
+        </div>
+        <div class="swatch">
+          <div class="chip dock-base"></div>
+          <div class="meta"><span class="name">Ink Cobalt</span><span class="hex">#1B2C4E</span></div>
+        </div>
+        <div class="swatch">
+          <div class="chip dock-mid"></div>
+          <div class="meta"><span class="name">Mid Cobalt</span><span class="hex">#2C4670</span></div>
+        </div>
+        <div class="swatch">
+          <div class="chip mark"></div>
+          <div class="meta"><span class="name">Warm Cream Mark</span><span class="hex">#FCF8EC → #EFE6D0</span></div>
+        </div>
+      </div>
+    </section>
+
+    <div class="colophon">
+      <span>HyTranslate Mac · Icon System v1.0</span>
+      <span>SVG · macOS 13+ · Apple Silicon</span>
+    </div>
+
+  </div>
+</body>
+</html>
