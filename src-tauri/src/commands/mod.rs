@@ -132,6 +132,22 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
                 tracing::warn!(error = ?e, "autostart apply failed");
             }
 
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(window) = app.get_webview_window("main") {
+                    let w = window.clone();
+                    window.on_window_event(move |event| {
+                        if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                            api.prevent_close();
+                            let _ = w.hide();
+                            tracing::debug!(window = "main", "close-to-hide intercepted");
+                        }
+                    });
+                } else {
+                    tracing::warn!(window = "main", "close handler not attached — window missing");
+                }
+            }
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

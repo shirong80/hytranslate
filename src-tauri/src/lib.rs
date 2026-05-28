@@ -11,6 +11,9 @@ pub mod paths;
 pub mod settings;
 pub mod shortcuts;
 
+#[cfg(target_os = "macos")]
+use tauri::Manager;
+
 pub fn run() {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -21,9 +24,25 @@ pub fn run() {
 
     let builder = tauri::Builder::default();
 
-    commands::register(builder)
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    let app = commands::register(builder)
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|_app_handle, _event| {
+        #[cfg(target_os = "macos")]
+        if let tauri::RunEvent::Reopen {
+            has_visible_windows: _,
+            ..
+        } = &_event
+        {
+            if let Some(window) = _app_handle.get_webview_window("main") {
+                let _ = window.show();
+                let _ = window.unminimize();
+                let _ = window.set_focus();
+                tracing::debug!(window = "main", "reopen requested");
+            }
+        }
+    });
 }
 
 #[cfg(test)]
