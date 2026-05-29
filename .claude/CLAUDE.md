@@ -170,8 +170,14 @@ Implement in order. Each phase has a hard completion bar in the PRD — do not a
 
 - **Default**: work directly on the current branch — no worktree
 - **Worktree**: only on explicit user request (parallel experiments, risky refactors)
-- Commits: Conventional Commits (`feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`)
-- PRs: Korean title; Korean or English body; reference PRD sections where relevant
+
+### Commit / Push / PR guidelines
+
+- **Use the `git-commit-push-pr` skill** whenever the user asks to commit, push, or open a PR (e.g., "커밋", "commit", "커밋해줘", "푸시", "push", "PR 올려줘", "PR 만들어줘", "pull request", "커밋하고 푸시", "commit and push", "open a PR"). Invoke it via the Skill tool before doing any manual git work — do not hand-roll the commit/push/PR flow.
+- **Commits**: split work into logical units; English Conventional Commits (`feat`, `fix`, `refactor`, `docs`, `style`, `test`, `chore`). Commit or push only when the user asks.
+- **Push**: to `origin`; never force-push shared branches. If on the default branch (`main`), branch first.
+- **PRs**: Korean title; Korean or English body; reference PRD sections where relevant.
+- **Out of scope**: version tagging and release publishing (`gh release`, release notes) are a separate task — do NOT use `git-commit-push-pr` for those; use the `github-release` skill instead.
 
 ## Agent Workflows
 
