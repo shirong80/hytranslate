@@ -16,6 +16,45 @@ pub fn get_popup<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<WebviewWind
         .ok_or_else(|| AppError::internal("popup window missing"))
 }
 
+/// popup 을 다른 앱의 네이티브 전체화면 Space 위에도 띄우기 위한 NSWindow 속성 설정.
+///
+/// tao 의 `set_visible_on_all_workspaces(true)` 는 `CanJoinAllSpaces` 만 켜고 정작
+/// 전체화면 overlay 에 필요한 `FullScreenAuxiliary` 는 켜지 않으므로(Tauri #11488),
+/// `ns_window()` 로 받은 NSWindow 에 collection behavior 와 window level 을 직접 설정한다.
+///
+/// collection behavior 는 상호배타 그룹(Spaces: CanJoinAllSpaces↔MoveToActiveSpace /
+/// FullScreen: Primary↔Auxiliary↔None)을 가지므로, 단순 OR 은 같은 그룹 비트를 동시에
+/// 켜 동작 미정의를 부른다. 각 그룹의 다른 멤버를 먼저 제거한 뒤 원하는 비트를 켜
+/// 무관한 기존 비트는 보존한다.
+#[cfg(target_os = "macos")]
+fn apply_fullscreen_overlay<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
+    use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+
+    // NSStatusWindowLevel — 메뉴 막대 아래, 전체화면 콘텐츠 위.
+    const NS_STATUS_WINDOW_LEVEL: isize = 25;
+
+    let ptr = window.ns_window().map_err(AppError::internal)? as *const NSWindow;
+    // SAFETY: tao 가 WebviewWindow 수명 동안 NSWindow 를 살려둔다. 메인 스레드(setup /
+    // 단축키 핸들러)에서만 호출된다.
+    let ns_window: &NSWindow = unsafe { &*ptr };
+
+    let mut behavior = ns_window.collectionBehavior();
+    behavior &= !NSWindowCollectionBehavior::MoveToActiveSpace;
+    behavior |= NSWindowCollectionBehavior::CanJoinAllSpaces;
+    behavior &= !(NSWindowCollectionBehavior::FullScreenPrimary
+        | NSWindowCollectionBehavior::FullScreenNone);
+    behavior |= NSWindowCollectionBehavior::FullScreenAuxiliary;
+    ns_window.setCollectionBehavior(behavior);
+
+    ns_window.setLevel(NS_STATUS_WINDOW_LEVEL);
+    Ok(())
+}
+
+#[cfg(not(target_os = "macos"))]
+fn apply_fullscreen_overlay<R: Runtime>(_window: &WebviewWindow<R>) -> AppResult<()> {
+    Ok(())
+}
+
 /// Major 4 — 마우스 커서가 있는 monitor 중심에 popup 을 배치. 둘 이상의 디스플레이가
 /// 있을 때 사용자가 보던 화면이 활성 monitor 로 우선시된다. cursor 추출에 실패하면
 /// primary 의 중심으로 fallback.
@@ -51,6 +90,9 @@ pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
         let _ = app.emit(POPUP_OPENED, ());
         return Ok(());
     }
+    // cold-show 마다 overlay 속성을 재적용한다. release 빌드에서 level/behavior 가
+    // 리셋되는 선례가 있어(Tauri #5566) 매 표시 시점에 보장한다.
+    apply_fullscreen_overlay(&window)?;
     place_on_active_monitor(&window)?;
     window.show().map_err(AppError::internal)?;
     window.set_focus().map_err(AppError::internal)?;

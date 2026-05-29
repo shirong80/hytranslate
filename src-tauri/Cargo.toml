@@ -39,6 +39,14 @@ r2d2_sqlite = "0.25"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 csv = "1"
 
+# popup 을 다른 앱의 네이티브 전체화면 Space 위에 띄우기 위한 NSWindow 직접 제어.
+# tao 의 set_visible_on_all_workspaces 는 FullScreenAuxiliary 를 켜지 않아(Tauri #11488)
+# objc2 로 collection behavior / window level 을 직접 설정한다. 두 crate 모두 tao/wry
+# 경유로 이미 트리에 있어 빌드 비용 증가는 없다.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder"] }
+
 [dev-dependencies]
 pretty_assertions = "1"
 tempfile = "3"
