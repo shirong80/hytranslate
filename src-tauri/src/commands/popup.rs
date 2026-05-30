@@ -32,11 +32,14 @@ pub fn get_popup<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<WebviewWind
 //   - canBecomeKeyWindow → 여기서 true 로 재공급(핵심).
 //   - canBecomeMainWindow → NSPanel 기본 false. panel 은 main 이 아니므로 정상.
 //   - sendEvent: → 표준 forwarding 으로 대체. tao 판의 유일한 추가 동작은 movable-by-
-//     window-background 시 performWindowDragWithEvent 인데, popup 은 movable 도 아니고
-//     drag-region 도 없어 그 분기가 애초에 발화하지 않는다.
+//     window-background(빈 배경 드래그) 시 performWindowDragWithEvent 인데, popup 은
+//     movable 이 아니라 그 분기가 발화하지 않는다. 헤더의 `data-tauri-drag-region` 드래그는
+//     이 경로와 무관하다 — Tauri 가 주입한 JS 가 start_dragging → tao drag_window 로
+//     `[ns_window performWindowDragWithEvent:]` 를 NSWindow 에 직접 호출하므로(sendEvent:
+//     를 거치지 않음) swizzle 후에도 그대로 동작한다.
 // 윈도우 동작 대부분은 window-class 가 아니라 별도 TaoWindowDelegate(resize/move/key 알림)
 // 가 담당하고 delegate 는 swizzle 에 영향받지 않으므로 그대로 유지된다.
-// (향후 popup 에 배경 드래그/movable 을 추가하면 sendEvent: 재구현이 필요하다.)
+// (배경 드래그/movable-by-window-background 를 추가할 때만 sendEvent: 재구현이 필요하다.)
 #[cfg(target_os = "macos")]
 objc2::define_class!(
     // SAFETY: NSPanel 은 서브클래싱 요구사항이 없고, HyPopupPanel 은 ivar 도 Drop 도 없다.

@@ -98,7 +98,12 @@ function PopupApp() {
         const base = 240;
         const desired = base + Math.max(0, lines) * lineHeight;
         const target = Math.min(Math.max(desired, 360), maxH);
-        await getCurrentWindow().setSize(new LogicalSize(480, target));
+        // tao 의 setSize 는 Cocoa bottom-left 를 고정해 output 이 늘면 창이 위로 자란다
+        // → 드래그로 옮긴 위치가 흔들린다. 리사이즈 전 top-left 를 잡아 뒤에 복원해 고정.
+        const win = getCurrentWindow();
+        const topLeft = await win.outerPosition();
+        await win.setSize(new LogicalSize(480, target));
+        if (!cancelled) await win.setPosition(topLeft);
       } catch {
         // Tauri 외 환경에서 silent.
       }
@@ -182,8 +187,11 @@ function PopupApp() {
 
   return (
     <main className="flex h-screen flex-col gap-2 rounded-xl bg-white/90 p-4 text-neutral-900 backdrop-blur-2xl dark:bg-neutral-950/90 dark:text-neutral-100">
-      <header className="flex items-center justify-between">
-        <h1 className="text-xs font-medium tracking-tight text-neutral-700 dark:text-neutral-300">
+      <header data-tauri-drag-region className="flex select-none items-center justify-between">
+        <h1
+          data-tauri-drag-region
+          className="text-xs font-medium tracking-tight text-neutral-700 dark:text-neutral-300"
+        >
           {t('popup.title')}
         </h1>
         <button
