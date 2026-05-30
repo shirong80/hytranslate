@@ -37,7 +37,7 @@ function PopupApp() {
   const setSourceLanguage = useTranslationStore((s) => s.setSourceLanguage);
   const setModel = useTranslationStore((s) => s.setModel);
 
-  const { runImmediately } = useTranslationController({ inputLimit: POPUP_INPUT_LIMIT });
+  const { saveAndClear } = useTranslationController({ inputLimit: POPUP_INPUT_LIMIT });
   useAutoCopyTranslation(autoCopy);
 
   const [copied, setCopied] = useState(false);
@@ -146,8 +146,8 @@ function PopupApp() {
     return () => window.clearTimeout(timer);
   }, [copied]);
 
-  // Esc / Cmd+C / Cmd+Enter 글로벌 핸들러. textarea 안에서 Cmd+Enter 는
-  // textarea 의 onKeyDown 으로도 받지만 결과 영역에 포커스가 있을 때도 동작하도록 글로벌 부착.
+  // Esc / Cmd+C / Cmd+Enter 글로벌 핸들러. Cmd+Enter 는 완료된 번역을 이력에 저장하고
+  // 입력/출력을 비운다 — 팝업 창은 닫지 않고 그대로 유지한다.
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if (event.key === 'Escape') {
@@ -157,7 +157,7 @@ function PopupApp() {
       }
       if ((event.metaKey || event.ctrlKey) && event.key === 'Enter') {
         event.preventDefault();
-        runImmediately();
+        void saveAndClear();
         return;
       }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'c' && output) {
@@ -175,7 +175,7 @@ function PopupApp() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [handleClose, handleCopy, output, runImmediately]);
+  }, [handleClose, handleCopy, output, saveAndClear]);
 
   const charCount = [...sourceText].length;
   const overLimit = charCount > POPUP_INPUT_LIMIT;

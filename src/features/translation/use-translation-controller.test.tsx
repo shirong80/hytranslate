@@ -91,4 +91,72 @@ describe('useTranslationController', () => {
     const cancelledIds = cancelCalls.map((c) => (c[1] as { requestId: string }).requestId);
     expect(cancelledIds).toContain(inFlightRequestId);
   });
+
+  // 입력 → debounce → translate_stream → markStarted/markCompleted 로 완료 상태를 만든다.
+  async function driveToCompleted(text: string, fullText: string): Promise<string> {
+    act(() => {
+      useTranslationStore.getState().setSourceText(text);
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    const call = invokeMock.mock.calls.find((c) => c[0] === 'translate_stream');
+    const requestId = (call?.[1] as { request: { requestId: string } }).request.requestId;
+    act(() => {
+      const store = useTranslationStore.getState();
+      store.markStarted({ requestId, startedAtMs: 1, resolvedLanguage: 'Korean' });
+      store.markCompleted({ requestId, fullText, durationMs: 100 });
+    });
+    return requestId;
+  }
+
+  it('saveAndClear is a no-op when no completed result exists', async () => {
+    const { result } = renderHook(() => useTranslationController({ debounceMs: 500 }));
+
+    await act(async () => {
+      await result.current.saveAndClear();
+    });
+
+    expect(invokeMock).not.toHaveBeenCalledWith('save_translation_record', expect.anything());
+  });
+
+  it('saveAndClear saves the completed translation and clears the input', async () => {
+    const { result } = renderHook(() => useTranslationController({ debounceMs: 500 }));
+    const requestId = await driveToCompleted('안녕하세요', 'Hello');
+
+    await act(async () => {
+      await result.current.saveAndClear();
+    });
+
+    const saveCalls = invokeMock.mock.calls.filter((c) => c[0] === 'save_translation_record');
+    expect(saveCalls).toHaveLength(1);
+    const saved = (saveCalls[0]?.[1] as { request: Record<string, unknown> }).request;
+    expect(saved).toMatchObject({
+      id: requestId,
+      sourceText: '안녕하세요',
+      sourceLanguage: 'Korean',
+      translatedText: 'Hello',
+      durationMs: 100,
+    });
+    // 전체 초기화.
+    expect(useTranslationStore.getState().sourceText).toBe('');
+    expect(useTranslationStore.getState().status).toBe('idle');
+  });
+
+  it('saveAndClear still clears the input even if the backend save fails', async () => {
+    invokeMock.mockImplementation(async (cmd: string) => {
+      if (cmd === 'save_translation_record') throw new Error('db down');
+      return undefined;
+    });
+
+    const { result } = renderHook(() => useTranslationController({ debounceMs: 500 }));
+    await driveToCompleted('안녕하세요', 'Hello');
+
+    await act(async () => {
+      await result.current.saveAndClear();
+    });
+
+    expect(useTranslationStore.getState().sourceText).toBe('');
+    expect(useTranslationStore.getState().status).toBe('idle');
+  });
 });

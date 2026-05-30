@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react';
 
+import { saveTranslationRecord } from '@features/history/ipc';
 import { isAppError } from '@lib/ipc/errors';
 
 import { attachTranslationListeners, cancelTranslation, translateStream } from './ipc';
@@ -37,6 +38,7 @@ export function useTranslationController(options: UseTranslationControllerOption
   const setIdle = useTranslationStore((s) => s.setIdle);
   const setTyping = useTranslationStore((s) => s.setTyping);
   const setDetecting = useTranslationStore((s) => s.setDetecting);
+  const setSourceText = useTranslationStore((s) => s.setSourceText);
 
   const debounceTimer = useRef<number | null>(null);
   const inFlightRef = useRef<string | null>(null);
@@ -192,5 +194,36 @@ export function useTranslationController(options: UseTranslationControllerOption
     void cancelInFlight();
   }, [cancelInFlight]);
 
-  return { runImmediately: retranslateImmediately, cancelCurrent, currentRequestId: requestId };
+  /**
+   * Cmd+Enter — 완료된 번역을 이력에 저장하고 입력/출력을 전체 초기화한다.
+   * - 결과가 준비되지 않았으면 (번역 중·빈 출력 등) no-op.
+   * - 저장이 실패해도 입력은 비운다 — 이력 손실은 비치명적, UI 흐름을 막지 않는다.
+   * - `save_history` 게이팅은 백엔드가 담당 (OFF 면 INSERT 없이 Ok → 여기선 그대로 초기화).
+   */
+  const saveAndClear = useCallback(async () => {
+    const s = useTranslationStore.getState();
+    if (s.status !== 'completed' || s.output.trim().length === 0) return;
+    try {
+      await saveTranslationRecord({
+        id: s.requestId ?? generateRequestId(),
+        sourceText: s.sourceText,
+        sourceLanguage: s.resolvedLanguage ?? s.sourceLanguage,
+        translatedText: s.output,
+        model: s.model,
+        durationMs: s.durationMs ?? 0,
+      });
+    } catch {
+      // 이력 저장 실패는 무시 — finally 에서 입력을 비워 흐름을 보존한다.
+    } finally {
+      setSourceText('');
+      setIdle();
+    }
+  }, [setSourceText, setIdle]);
+
+  return {
+    runImmediately: retranslateImmediately,
+    saveAndClear,
+    cancelCurrent,
+    currentRequestId: requestId,
+  };
 }

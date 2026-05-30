@@ -34,4 +34,14 @@ export interface ExportResult {
   records: number;
 }
 
+/** Cmd+Enter 수동 저장 페이로드. createdAt 은 백엔드가 생성한다. */
+export interface SaveRecordRequest {
+  id: string;
+  sourceText: string;
+  sourceLanguage: SourceLanguage;
+  translatedText: string;
+  model: string;
+  durationMs: number;
+}
+
 export const HISTORY_PAGE_SIZE = 50;

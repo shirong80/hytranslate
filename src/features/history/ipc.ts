@@ -4,6 +4,7 @@ import type {
   ExportResult,
   ListRequest,
   ListResult,
+  SaveRecordRequest,
   SearchRequest,
   TranslationRecord,
 } from './types';
@@ -34,6 +35,10 @@ export async function toggleFavorite(id: string): Promise<boolean | null> {
 
 export async function setTags(id: string, tags: string[]): Promise<boolean> {
   return invoke<boolean>('set_tags', { request: { id, tags } });
+}
+
+export async function saveTranslationRecord(request: SaveRecordRequest): Promise<void> {
+  return invoke<void>('save_translation_record', { request });
 }
 
 export async function exportHistoryCsv(): Promise<ExportResult> {

@@ -31,7 +31,7 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
   const copyError = useTranslationStore((s) => s.copyError);
   const setCopyError = useTranslationStore((s) => s.setCopyError);
 
-  const { runImmediately } = useTranslationController();
+  const { runImmediately, saveAndClear } = useTranslationController();
   const [copied, setCopied] = useState(false);
 
   const charCount = [...sourceText].length;
@@ -41,10 +41,10 @@ export function TranslationPanel({ onOpenSettings, onOpenHistory }: TranslationP
     (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
       if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) {
         event.preventDefault();
-        runImmediately();
+        void saveAndClear();
       }
     },
-    [runImmediately],
+    [saveAndClear],
   );
 
   const handleCopy = useCallback(async () => {

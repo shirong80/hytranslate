@@ -83,7 +83,7 @@ export const ko = Object.freeze({
   'popup.action.close': '닫기',
   'popup.action.copy': '복사',
   'popup.action.copied': '복사됨',
-  'popup.shortcuts.hint': 'Cmd+Enter 번역 · Cmd+C 결과 복사 · Esc 닫기',
+  'popup.shortcuts.hint': 'Cmd+Enter 저장 · Cmd+C 결과 복사 · Esc 닫기',
 
   'menubar.input.placeholder': '간단 번역…',
   'menubar.recent.title': '최근 5건',
