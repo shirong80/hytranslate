@@ -10,7 +10,7 @@ use std::time::Instant;
 
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
-use tauri::{Emitter, Manager};
+use tauri::Emitter;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -19,7 +19,6 @@ use crate::events::{
     TRANSLATION_CANCELLED, TRANSLATION_CHUNK, TRANSLATION_COMPLETED, TRANSLATION_ERROR,
     TRANSLATION_STARTED,
 };
-use crate::history::{self, HistoryRepo, InsertRecord};
 use crate::language::{self, SourceLanguage};
 use crate::ollama::{ChunkFlow, OllamaClient};
 use crate::settings::SettingsStore;
@@ -28,15 +27,15 @@ pub const MAIN_INPUT_LIMIT: usize = 30_000;
 
 /// 요청별 cancel token + terminal-state guard.
 ///
-/// code-review v1 follow-up review §10 (Critical 1 v3) — cancel 과 persist 의 terminal
-/// 결정을 같은 mutex critical section 으로 묶어 race 를 닫는다. 한쪽이 lock 을 잡고
-/// `claimed = true` 로 마킹하면 다른 쪽은 noop. 보장:
+/// 저장은 더 이상 worker 에서 일어나지 않는다 (이력 저장은 사용자가 Cmd+Enter 로
+/// `save_translation_record` 를 명시 호출). 그래도 terminal guard 는 유지한다 — 늦게 도착한
+/// cancel 이 이미 성공한 stream 결과를 `completed` 로 emit 하지 못하게 막는 이벤트 정합성
+/// 보장 때문. 한쪽이 lock 을 잡고 `claimed = true` 로 마킹하면 다른 쪽은 noop:
 ///
-/// - cancel 이 먼저 잡으면: token.cancel() + claimed=true. 이후 worker 의 persist 분기는
-///   lock 잡고 claimed==true 를 보고 INSERT 자체를 건너뜀 → cancelled emit.
-/// - worker 가 먼저 잡으면: claimed=true 후 INSERT+commit. 그 뒤 도착한 cancel 은
-///   claimed==true 를 보고 false 반환 (no-op). DB 에 이미 commit 된 row 는 stale 아님 —
-///   사용자 입력 시점엔 아직 commit 전이었으므로 이 ordering 은 정상 종료.
+/// - cancel 이 먼저 잡으면: token.cancel() + claimed=true. 이후 worker 는 lock 안에서
+///   claimed==true 를 보고 `cancelled` 를 emit (Ok 결과여도 completed 로 흘리지 않음).
+/// - worker 가 먼저 잡으면: claimed=true 후 `completed` emit. 그 뒤 도착한 cancel 은
+///   claimed==true 를 보고 false 반환 (no-op).
 pub struct RequestState {
     pub token: CancellationToken,
     pub terminal: Mutex<bool>,
@@ -184,9 +183,7 @@ pub async fn translate_stream<R: tauri::Runtime>(
         request.source_language
     };
 
-    let snapshot = settings.get();
-    let endpoint = snapshot.ollama_endpoint;
-    let save_history = snapshot.save_history;
+    let endpoint = settings.get().ollama_endpoint;
 
     let token = CancellationToken::new();
     registry.insert(request.request_id.clone(), token.clone());
@@ -194,9 +191,6 @@ pub async fn translate_stream<R: tauri::Runtime>(
     let app_handle = app.clone();
     let client = (*client).clone();
     let registry_inner = registry.inner().clone();
-    let history_repo: Option<Arc<HistoryRepo>> = app
-        .try_state::<Arc<HistoryRepo>>()
-        .map(|s: tauri::State<'_, Arc<HistoryRepo>>| s.inner().clone());
     let resolved_request = TranslateRequest {
         source_language: resolved_language,
         ..request
@@ -210,8 +204,6 @@ pub async fn translate_stream<R: tauri::Runtime>(
             endpoint,
             resolved_request,
             token,
-            history_repo,
-            save_history,
         )
         .await;
     });
@@ -229,7 +221,6 @@ pub async fn cancel_translation(
     Ok(())
 }
 
-#[allow(clippy::too_many_arguments)]
 async fn run_translation<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     client: OllamaClient,
@@ -237,8 +228,6 @@ async fn run_translation<R: tauri::Runtime>(
     endpoint: String,
     request: TranslateRequest,
     token: CancellationToken,
-    history_repo: Option<Arc<HistoryRepo>>,
-    save_history: bool,
 ) {
     let request_id = request.request_id.clone();
     let model = request.model.clone();
@@ -288,22 +277,13 @@ async fn run_translation<R: tauri::Runtime>(
         )
         .await;
 
-    // Critical 1 v3 (code-review v1 follow-up review §10) — terminal-state guard.
-    // cancel 과 persist 의 terminal 결정을 같은 mutex critical section 으로 묶는다.
-    // lock 안에서 INSERT+commit 까지 수행하므로 commit 직전 race 가 닫힌다.
+    // terminal-state guard — 늦게 도착한 cancel 이 성공한 stream 결과를 completed 로
+    // 덮어쓰지 못하게 cancel 과 worker 의 terminal 결정을 같은 mutex critical section 으로 묶는다.
     let state = registry
         .get(&request_id)
         .expect("registry has the state we just inserted");
 
-    let outcome = decide_outcome(
-        &state,
-        result,
-        history_repo.as_deref(),
-        save_history,
-        &request_id,
-        &request,
-        started.elapsed().as_millis(),
-    );
+    let outcome = decide_outcome(&state, result, started.elapsed().as_millis());
     registry.remove(&request_id);
 
     match outcome {
@@ -357,15 +337,12 @@ enum TerminalEvent {
     Error(AppError),
 }
 
-/// terminal mutex 를 잡고 outcome 을 결정한다. lock 안에서 INSERT+commit 까지 마쳐
-/// cancel 과의 race 가 결정적으로 닫힌다.
+/// terminal mutex 를 잡고 outcome 을 결정한다. 저장은 하지 않는다 — cancel 과 worker 의
+/// terminal 결정을 같은 critical section 으로 묶어, 늦게 도착한 cancel 이 성공 결과를
+/// completed 로 흘리지 못하게 한다.
 fn decide_outcome(
     state: &RequestState,
     result: AppResult<String>,
-    repo: Option<&HistoryRepo>,
-    save_history: bool,
-    request_id: &str,
-    request: &TranslateRequest,
     duration_ms: u128,
 ) -> TerminalEvent {
     let mut claimed = state
@@ -376,18 +353,9 @@ fn decide_outcome(
     match result {
         Ok(full_text) => {
             if *claimed {
-                // cancel 이 race 에서 이겼다. INSERT 하지 않음.
+                // cancel 이 race 에서 이겼다.
                 TerminalEvent::Cancelled
             } else {
-                // worker 가 race 에서 이겼다 — 같은 lock 안에서 persist 수행.
-                persist_completed(
-                    repo,
-                    save_history,
-                    request_id,
-                    request,
-                    &full_text,
-                    duration_ms,
-                );
                 *claimed = true;
                 TerminalEvent::Completed {
                     full_text,
@@ -408,39 +376,6 @@ fn decide_outcome(
                 TerminalEvent::Error(err)
             }
         }
-    }
-}
-
-/// PRD §8.7 — completed 이후 (terminal mutex 를 쥔 상태에서) 호출. cancel/error 경로는
-/// 호출하지 않는다. `save_history` 가 false 거나 repo 가 미초기화면 silent skip.
-/// DB 오류는 history 저장만 실패한 것이므로 worker 분기에는 영향 없음 (completed 그대로).
-fn persist_completed(
-    repo: Option<&HistoryRepo>,
-    save_history: bool,
-    request_id: &str,
-    request: &TranslateRequest,
-    full_text: &str,
-    duration_ms: u128,
-) {
-    if !save_history {
-        return;
-    }
-    let Some(repo) = repo else {
-        tracing::debug!(request_id, "history repo unavailable; skip insert");
-        return;
-    };
-    let duration_clamped = i64::try_from(duration_ms).unwrap_or(i64::MAX);
-    let insert = InsertRecord {
-        id: request_id.to_string(),
-        source_text: request.source_text.clone(),
-        source_language: request.source_language,
-        translated_text: full_text.to_string(),
-        model: request.model.clone(),
-        duration_ms: duration_clamped,
-        created_at: history::now_iso8601(),
-    };
-    if let Err(e) = repo.insert(insert) {
-        tracing::warn!(request_id, error = ?e, "history insert failed");
     }
 }
 
@@ -508,133 +443,59 @@ mod tests {
         assert!(validate_request_id(&Uuid::new_v4().to_string()).is_ok());
     }
 
-    fn fresh_repo() -> (tempfile::TempDir, Arc<HistoryRepo>) {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("hytranslate.sqlite");
-        let pool = crate::db::open(&path).unwrap();
-        (dir, HistoryRepo::new(pool))
-    }
-
-    fn fake_request() -> TranslateRequest {
-        TranslateRequest {
-            source_text: "안녕하세요".to_string(),
-            source_language: SourceLanguage::Korean,
-            model: "test-model".to_string(),
-            request_id: Uuid::new_v4().to_string(),
-        }
-    }
-
+    /// 늦게 도착한 cancel 이 먼저 claim 하면 stream 이 Ok 여도 Cancelled 를 반환한다.
     #[test]
-    fn persist_completed_writes_when_save_history_on() {
-        let (_d, repo) = fresh_repo();
-        let request = fake_request();
-        persist_completed(
-            Some(&repo),
-            true,
-            &request.request_id,
-            &request,
-            "Hello",
-            100,
-        );
-        let got = repo.get(&request.request_id).unwrap();
-        assert!(got.is_some());
-    }
-
-    #[test]
-    fn persist_completed_skips_when_save_history_off() {
-        let (_d, repo) = fresh_repo();
-        let request = fake_request();
-        persist_completed(
-            Some(&repo),
-            false,
-            &request.request_id,
-            &request,
-            "Hello",
-            100,
-        );
-        let got = repo.get(&request.request_id).unwrap();
-        assert!(got.is_none());
-    }
-
-    #[test]
-    fn persist_completed_no_op_when_repo_missing() {
-        let request = fake_request();
-        // None repo 는 panic 없이 silent skip.
-        persist_completed(None, true, &request.request_id, &request, "Hello", 100);
-    }
-
-    /// Critical 1 v3 회귀 — decide_outcome 이 cancel 이 먼저 claim 한 상황에서 stream
-    /// 결과를 받아도 INSERT 를 건너뛰고 Cancelled 를 반환한다.
-    #[test]
-    fn decide_outcome_skips_persist_when_cancel_wins() {
-        let (_d, repo) = fresh_repo();
-        let request = fake_request();
+    fn decide_outcome_yields_cancelled_when_cancel_wins() {
         let state = RequestState::new(CancellationToken::new());
         // cancel 이 먼저 잡음 — claimed=true.
         {
             let mut guard = state.terminal.lock().unwrap();
             *guard = true;
         }
-        let out = decide_outcome(
-            &state,
-            Ok("Hello".to_string()),
-            Some(&repo),
-            true,
-            &request.request_id,
-            &request,
-            100,
-        );
+        let out = decide_outcome(&state, Ok("Hello".to_string()), 100);
         assert!(matches!(out, TerminalEvent::Cancelled));
-        assert!(
-            repo.get(&request.request_id).unwrap().is_none(),
-            "cancel 이 먼저 claim 한 경우 INSERT 는 일어나면 안 된다"
-        );
     }
 
-    /// Critical 1 v3 회귀 — worker 가 lock 을 먼저 잡으면 같은 critical section 안에서
-    /// INSERT+commit 까지 마치고 claimed=true. 이후 cancel 은 noop, row 는 보존.
+    /// worker 가 lock 을 먼저 잡으면 Completed 를 반환하고 claimed=true 로 마킹한다.
     #[test]
-    fn decide_outcome_persists_and_claims_when_worker_wins() {
-        let (_d, repo) = fresh_repo();
-        let request = fake_request();
+    fn decide_outcome_completes_and_claims_when_worker_wins() {
         let state = RequestState::new(CancellationToken::new());
-        let out = decide_outcome(
-            &state,
-            Ok("Hello".to_string()),
-            Some(&repo),
-            true,
-            &request.request_id,
-            &request,
-            100,
-        );
+        let out = decide_outcome(&state, Ok("Hello".to_string()), 100);
         match out {
-            TerminalEvent::Completed { full_text, .. } => assert_eq!(full_text, "Hello"),
+            TerminalEvent::Completed {
+                full_text,
+                duration_ms,
+            } => {
+                assert_eq!(full_text, "Hello");
+                assert_eq!(duration_ms, 100);
+            }
             other => panic!("expected Completed, got {other:?}"),
         }
-        // 같은 lock 안에서 INSERT 완료.
-        assert!(repo.get(&request.request_id).unwrap().is_some());
         // worker 가 이미 claim 했으니 후속 cancel 은 noop.
         assert!(*state.terminal.lock().unwrap());
     }
 
-    /// Critical 1 v3 회귀 — stream 자체가 Err(Cancelled) 로 끝났을 때는 항상 Cancelled.
-    /// claimed 가 아직 false 라도 마킹 후 cancelled emit.
+    /// stream 자체가 Err(Cancelled) 로 끝났을 때는 항상 Cancelled (claimed 마킹).
     #[test]
     fn decide_outcome_handles_inner_cancel_error() {
-        let (_d, repo) = fresh_repo();
-        let request = fake_request();
+        let state = RequestState::new(CancellationToken::new());
+        let out = decide_outcome(&state, Err(AppError::Cancelled), 100);
+        assert!(matches!(out, TerminalEvent::Cancelled));
+        assert!(*state.terminal.lock().unwrap());
+    }
+
+    /// 비-cancel 에러는 claimed 가 false 면 Error 를 반환하고 claimed 마킹한다.
+    #[test]
+    fn decide_outcome_yields_error_when_not_claimed() {
         let state = RequestState::new(CancellationToken::new());
         let out = decide_outcome(
             &state,
-            Err(AppError::Cancelled),
-            Some(&repo),
-            true,
-            &request.request_id,
-            &request,
+            Err(AppError::Internal {
+                message: "boom".to_string(),
+            }),
             100,
         );
-        assert!(matches!(out, TerminalEvent::Cancelled));
-        assert!(repo.get(&request.request_id).unwrap().is_none());
+        assert!(matches!(out, TerminalEvent::Error(_)));
         assert!(*state.terminal.lock().unwrap());
     }
 

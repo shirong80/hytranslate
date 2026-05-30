@@ -168,6 +168,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             history::delete_all_translation_records,
             history::toggle_favorite,
             history::set_tags,
+            history::save_translation_record,
             history::export_history_csv,
             history::export_history_json,
             onboarding::detect_environment,

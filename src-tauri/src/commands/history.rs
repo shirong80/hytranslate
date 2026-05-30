@@ -12,9 +12,19 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use tauri_plugin_dialog::{DialogExt, FilePath};
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
+use crate::commands::translate::MAIN_INPUT_LIMIT;
 use crate::errors::{AppError, AppResult};
-use crate::history::{HistoryRepo, ListQuery, ListResult, TranslationRecord};
+use crate::history::{
+    now_iso8601, HistoryRepo, InsertRecord, ListQuery, ListResult, TranslationRecord,
+};
+use crate::language::SourceLanguage;
+use crate::settings::SettingsStore;
+
+/// 저장 경로 translated_text 상한. 정상 번역은 입력 cap 의 몇 배를 넘지 않으므로
+/// 넉넉히 잡되, 웹뷰가 MB 단위 blob 을 직접 밀어넣는 abuse 는 차단한다.
+const MAX_TRANSLATED_LEN: usize = 120_000;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -46,6 +56,18 @@ pub struct IdRequest {
 pub struct SetTagsRequest {
     pub id: String,
     pub tags: Vec<String>,
+}
+
+/// Cmd+Enter 수동 저장 페이로드. `created_at` 은 백엔드가 생성하므로 FE 가 보내지 않는다.
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveRecordRequest {
+    pub id: String,
+    pub source_text: String,
+    pub source_language: SourceLanguage,
+    pub translated_text: String,
+    pub model: String,
+    pub duration_ms: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -140,6 +162,54 @@ pub async fn set_tags(
     request: SetTagsRequest,
 ) -> AppResult<bool> {
     repo.set_tags(&request.id, &request.tags)
+}
+
+/// 사용자가 Cmd+Enter 로 명시 저장하는 단일 레코드. `save_history` 가 꺼져 있으면 INSERT
+/// 없이 `Ok(())` 를 반환한다 (FE 는 결과와 무관하게 입력을 비운다). 저장 자체가 실패해도
+/// 이력 손실은 비치명적이므로 FE 흐름은 영향받지 않는다.
+#[tauri::command]
+pub async fn save_translation_record(
+    repo: tauri::State<'_, Arc<HistoryRepo>>,
+    settings: tauri::State<'_, Arc<SettingsStore>>,
+    request: SaveRecordRequest,
+) -> AppResult<()> {
+    save_record_inner(&repo, settings.get().save_history, request)
+}
+
+/// 테스트 가능한 코어 — tauri::State 분리. `save_history` 게이팅은 백엔드가 단일 진실원.
+///
+/// 웹뷰는 translate 경로의 길이 cap·UUID requestId 를 우회해 이 커맨드를 직접 호출할 수
+/// 있다(XSS 포함). 따라서 저장 경로에서도 입력을 신뢰하지 않고 다시 방어한다 — 길이 cap 으로
+/// DB 비대화/디스크 고갈(DoS)을, id 형식 검증으로 쓰레기 식별자 유입을 막는다.
+fn save_record_inner(
+    repo: &HistoryRepo,
+    save_history: bool,
+    request: SaveRecordRequest,
+) -> AppResult<()> {
+    if !save_history {
+        return Ok(());
+    }
+    if request.source_text.chars().count() > MAIN_INPUT_LIMIT {
+        return Err(AppError::InputTooLong {
+            limit: MAIN_INPUT_LIMIT,
+        });
+    }
+    if request.translated_text.chars().count() > MAX_TRANSLATED_LEN {
+        return Err(AppError::InputTooLong {
+            limit: MAX_TRANSLATED_LEN,
+        });
+    }
+    Uuid::parse_str(&request.id)
+        .map_err(|e| AppError::internal(format!("invalid record id (UUID expected): {e}")))?;
+    repo.insert(InsertRecord {
+        id: request.id,
+        source_text: request.source_text,
+        source_language: request.source_language,
+        translated_text: request.translated_text,
+        model: request.model,
+        duration_ms: request.duration_ms,
+        created_at: now_iso8601(),
+    })
 }
 
 #[tauri::command]
@@ -293,6 +363,58 @@ mod tests {
             is_favorite: fav,
             tags: tags.into_iter().map(String::from).collect(),
         }
+    }
+
+    fn fresh_repo() -> (tempfile::TempDir, Arc<HistoryRepo>) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("hytranslate.sqlite");
+        let pool = crate::db::open(&path).unwrap();
+        (dir, HistoryRepo::new(pool))
+    }
+
+    const UUID_A: &str = "11111111-1111-4111-8111-111111111111";
+
+    fn save_request(id: &str) -> SaveRecordRequest {
+        SaveRecordRequest {
+            id: id.to_string(),
+            source_text: "안녕하세요".to_string(),
+            source_language: SourceLanguage::Korean,
+            translated_text: "Hello".to_string(),
+            model: "test-model".to_string(),
+            duration_ms: 100,
+        }
+    }
+
+    #[test]
+    fn save_record_inner_writes_when_save_history_on() {
+        let (_d, repo) = fresh_repo();
+        save_record_inner(&repo, true, save_request(UUID_A)).unwrap();
+        assert!(repo.get(UUID_A).unwrap().is_some());
+    }
+
+    #[test]
+    fn save_record_inner_skips_when_save_history_off() {
+        let (_d, repo) = fresh_repo();
+        save_record_inner(&repo, false, save_request(UUID_A)).unwrap();
+        assert!(repo.get(UUID_A).unwrap().is_none());
+    }
+
+    #[test]
+    fn save_record_inner_rejects_non_uuid_id() {
+        let (_d, repo) = fresh_repo();
+        let err = save_record_inner(&repo, true, save_request("not-a-uuid"));
+        assert!(err.is_err());
+        assert!(repo.get("not-a-uuid").unwrap().is_none());
+    }
+
+    #[test]
+    fn save_record_inner_rejects_oversized_source_text() {
+        let (_d, repo) = fresh_repo();
+        let mut req = save_request(UUID_A);
+        req.source_text = "가".repeat(MAIN_INPUT_LIMIT + 1);
+        let err = save_record_inner(&repo, true, req);
+        assert!(matches!(err, Err(AppError::InputTooLong { .. })));
+        assert!(repo.get(UUID_A).unwrap().is_none());
     }
 
     #[test]
