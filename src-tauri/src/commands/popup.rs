@@ -9,12 +9,51 @@ use tauri::{Emitter, LogicalPosition, Manager, Runtime, WebviewWindow};
 use crate::errors::{AppError, AppResult};
 use crate::events::{POPUP_CLOSED, POPUP_OPENED};
 
+// define_class! 의 `unsafe impl` 은 프로토콜을 bare ident 로만 받는다(path 불가).
+#[cfg(target_os = "macos")]
+use objc2::runtime::NSObjectProtocol;
+
 const POPUP_LABEL: &str = "popup";
 
 pub fn get_popup<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<WebviewWindow<R>> {
     app.get_webview_window(POPUP_LABEL)
         .ok_or_else(|| AppError::internal("popup window missing"))
 }
+
+// popup 의 라이브 NSWindow 를 swizzle 로 갈아끼울 nonactivating NSPanel 서브클래스.
+//
+// borderless NSWindow 의 `canBecomeKeyWindow` 기본값은 false 이고, swizzle 로 tao 의
+// TaoWindow 오버라이드를 잃으면 키 포커스를 못 받는다. NSPanel 위에서 true 로 강제해
+// 전체화면 위에서도 textarea 가 입력을 받게 한다. HyPopupPanel 은 ivar 도 Drop 도 없어
+// `set_class` 가 isa 만 교체하므로(상위 chain 도 NSWindow 로 동일) 기존 객체의 메모리
+// 레이아웃이 보존된다.
+//
+// swizzle 로 잃는 TaoWindow 의 클래스 메서드는 셋뿐이고 popup 에선 모두 안전하다:
+//   - canBecomeKeyWindow → 여기서 true 로 재공급(핵심).
+//   - canBecomeMainWindow → NSPanel 기본 false. panel 은 main 이 아니므로 정상.
+//   - sendEvent: → 표준 forwarding 으로 대체. tao 판의 유일한 추가 동작은 movable-by-
+//     window-background 시 performWindowDragWithEvent 인데, popup 은 movable 도 아니고
+//     drag-region 도 없어 그 분기가 애초에 발화하지 않는다.
+// 윈도우 동작 대부분은 window-class 가 아니라 별도 TaoWindowDelegate(resize/move/key 알림)
+// 가 담당하고 delegate 는 swizzle 에 영향받지 않으므로 그대로 유지된다.
+// (향후 popup 에 배경 드래그/movable 을 추가하면 sendEvent: 재구현이 필요하다.)
+#[cfg(target_os = "macos")]
+objc2::define_class!(
+    // SAFETY: NSPanel 은 서브클래싱 요구사항이 없고, HyPopupPanel 은 ivar 도 Drop 도 없다.
+    #[unsafe(super = objc2_app_kit::NSPanel)]
+    #[name = "HyPopupPanel"]
+    struct HyPopupPanel;
+
+    // SAFETY: NSObjectProtocol 은 안전 요구사항이 없다.
+    unsafe impl NSObjectProtocol for HyPopupPanel {}
+
+    impl HyPopupPanel {
+        #[unsafe(method(canBecomeKeyWindow))]
+        fn can_become_key_window(&self) -> bool {
+            true
+        }
+    }
+);
 
 /// popup 의 NSWindow 에 전체화면 overlay 속성(collection behavior + window level)을 건다.
 ///
@@ -112,26 +151,49 @@ fn cold_show<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
 }
 
 /// `cold_show` 가 메인스레드에서 실행하는 실제 네이티브 시퀀스.
-/// `set_focus`(= makeKeyAndOrderFront + activateIgnoringOtherApps)는 전체화면에서 Space
-/// 전환을 유발하므로 쓰지 않고 `makeKeyAndOrderFront` 까지만 한다.
+///
+/// 핵심: popup 의 라이브 NSWindow 를 nonactivating NSPanel 로 class-swizzle 한다. 기본
+/// `Regular` activation policy 의 일반 NSWindow 는 macOS 10.14+ 에서 타 앱 네이티브 전체화면
+/// Space 위 표시가 막혀(Tauri #11488), `CanJoinAllSpaces` + 높은 level 만으로는 전체화면 위에
+/// 못 뜨고 엉뚱한 Space 로 떨어진다. panel 전환 + `orderFrontRegardless` 로 (1) 백그라운드
+/// 상태에서도 전면 배치하고, (2) `NonactivatingPanel` 스타일 + `canBecomeKeyWindow` 로 앱을
+/// activate(=Space 전환)하지 않고 키 포커스를 얻는다.
+///
+/// swizzle·styleMask·overlay 는 모두 멱등이라 cold-show 마다 재적용해 release 빌드의
+/// level/behavior 리셋(#5566)·tao 의 styleMask clobber 에도 견고하다.
 #[cfg(target_os = "macos")]
 fn cold_show_on_main<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
-    use objc2_app_kit::NSWindow;
+    use objc2::runtime::AnyObject;
+    use objc2::ClassType;
+    use objc2_app_kit::{NSWindow, NSWindowStyleMask};
     use objc2_foundation::NSPoint;
 
-    let ptr = window.ns_window().map_err(AppError::internal)? as *const NSWindow;
+    let ptr = window.ns_window().map_err(AppError::internal)?;
     // SAFETY: `cold_show` 가 run_on_main_thread 로 메인스레드 실행을 보장하고, tao 가
-    // WebviewWindow 수명 동안 NSWindow 를 살려둔다. 만들어지는 `&NSWindow` 외 가변 별칭 없음.
-    let ns_window: &NSWindow = unsafe { &*ptr };
+    // WebviewWindow 수명 동안 NSWindow 를 살려둔다. HyPopupPanel 은 ivar 가 없어 `set_class`
+    // 가 isa 만 교체하므로 기존 NSWindow 의 메모리 레이아웃이 그대로 유효하다.
+    let obj: &AnyObject = unsafe { &*(ptr as *const AnyObject) };
+    let _ = unsafe { AnyObject::set_class(obj, HyPopupPanel::class()) };
+
+    let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+    let mut mask = ns_window.styleMask();
+    mask |= NSWindowStyleMask::NonactivatingPanel;
+    ns_window.setStyleMask(mask);
+    // SAFETY: 닫혀도 해제되지 않게 한다 — 수명은 tao 가 소유하고 우리는 hide(orderOut)만 쓴다.
+    unsafe { ns_window.setReleasedWhenClosed(false) };
 
     apply_fullscreen_overlay(ns_window);
     match cocoa_placement(window)? {
-        // 위치를 order-front '이전에' 동기 적용 — race 의 근본 제거.
+        // 위치를 order-front '이전에' 동기 적용 — 듀얼모니터 stale-frame race 제거(기존 회귀 방지).
         Some((x, y)) => ns_window.setFrameTopLeftPoint(NSPoint::new(x, y)),
         // monitor API 실패 — Tauri 기본 center 로 fallback.
         None => window.center().map_err(AppError::internal)?,
     }
-    ns_window.makeKeyAndOrderFront(None);
+    // 백그라운드(타 앱이 전면)에서도 전면 배치되는 유일한 호출. makeKeyAndOrderFront 는
+    // 비활성 앱에선 거부/후순위라(macOS 13.3+ 경고) 전체화면 Space 에 못 떴다.
+    ns_window.orderFrontRegardless();
+    // nonactivating panel 이라 앱 activate 없이 key 가 된다 → 전체화면에서 빠져나오지 않음.
+    ns_window.makeKeyWindow();
     // release 빌드에서 level/behavior 가 리셋되는 선례(#5566) — order-front 직후 재적용.
     apply_fullscreen_overlay(ns_window);
     Ok(())
@@ -147,14 +209,39 @@ fn cold_show<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
     Ok(())
 }
 
+/// 이미 보이는 popup 을 앱 activate 없이 다시 전면+키로 잡는다. `set_focus`(activate)는
+/// 전체화면 위에서 Space 전환을 유발하므로, cold-show 에서 이미 panel 로 전환된 윈도우에
+/// 메인스레드에서 `orderFrontRegardless` + `makeKeyWindow` 만 다시 건다.
+#[cfg(target_os = "macos")]
+fn refront<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
+    let win = window.clone();
+    window
+        .run_on_main_thread(move || {
+            if let Ok(ptr) = win.ns_window() {
+                use objc2_app_kit::NSWindow;
+                // SAFETY: 메인스레드 실행 + tao 가 NSWindow 를 살려둔다. cold-show 에서 이미
+                // panel 로 swizzle 되어 있어 추가 별칭 없이 전면/키만 다시 건다.
+                let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+                ns_window.orderFrontRegardless();
+                ns_window.makeKeyWindow();
+            }
+            let _ = win.emit(POPUP_OPENED, ());
+        })
+        .map_err(AppError::internal)
+}
+
+#[cfg(not(target_os = "macos"))]
+fn refront<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
+    window.set_focus().map_err(AppError::internal)?;
+    let _ = window.emit(POPUP_OPENED, ());
+    Ok(())
+}
+
 pub fn show<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<()> {
     let window = get_popup(app)?;
     if window.is_visible().map_err(AppError::internal)? {
-        // 이미 보이는 경우 포커스만 가져온다 — 사용자가 다른 앱에서 단축키를
-        // 두 번 누른 상황.
-        window.set_focus().map_err(AppError::internal)?;
-        let _ = app.emit(POPUP_OPENED, ());
-        return Ok(());
+        // 이미 보이는 경우: 앱 activate 없이 전면+키만 다시 잡는다(전체화면 Space 전환 방지).
+        return refront(&window);
     }
     // cold_show 가 표시 완료 후 POPUP_OPENED 를 emit 한다(macOS 는 메인스레드 디스패치).
     cold_show(&window)

@@ -40,13 +40,15 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "serd
 csv = "1"
 
 # popup 을 다른 앱의 네이티브 전체화면 Space 위에 띄우기 위한 NSWindow 직접 제어.
-# tao 의 set_visible_on_all_workspaces 는 FullScreenAuxiliary 를 켜지 않아(Tauri #11488)
-# objc2 로 collection behavior / window level 을 직접 설정한다. 두 crate 모두 tao/wry
-# 경유로 이미 트리에 있어 빌드 비용 증가는 없다.
+# 일반 NSWindow 는 Regular activation policy 에서 macOS 10.14+ 가 타 앱 전체화면 위 표시를
+# 막으므로(Tauri #11488), popup 을 nonactivating NSPanel 로 class-swizzle 한 뒤
+# orderFrontRegardless 로 띄운다(objc2 의 define_class! + AnyObject::set_class).
+# 세 crate 모두 tao/wry 경유로 이미 트리에 있어 신규 lock 패키지 0개.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder"] }
-# NSPoint(= CGPoint) 만 쓴다. objc2-app-kit 이 이미 같은 feature 를 켜므로 신규 lock 패키지 0개.
+# NSPanel = popup swizzle 대상, NSWindow = level/behavior/styleMask, NSResponder = 상위 클래스.
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder", "NSPanel"] }
+# NSPoint(= CGPoint). NSPanel feature 가 objc2-foundation 의 NSCoder/NSObject 를 자동으로 켠다.
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "objc2-core-foundation"] }
 
 [dev-dependencies]
