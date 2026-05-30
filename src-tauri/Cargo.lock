@@ -1674,6 +1674,7 @@ dependencies = [
  "futures-util",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
  "pretty_assertions",
  "r2d2",
  "r2d2_sqlite",

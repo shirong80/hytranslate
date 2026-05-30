@@ -46,6 +46,8 @@ csv = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder"] }
+# NSPoint(= CGPoint) 만 쓴다. objc2-app-kit 이 이미 같은 feature 를 켜므로 신규 lock 패키지 0개.
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "objc2-core-foundation"] }
 
 [dev-dependencies]
 pretty_assertions = "1"
