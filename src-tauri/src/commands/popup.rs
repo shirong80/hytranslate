@@ -1,8 +1,9 @@
 //! Floating popup 윈도우 제어.
 //!
-//! - `show_popup`: 메인 디스플레이 중앙 배치 후 표시 + 포커스.
+//! - `show_popup`: 커서가 있는 화면 중앙 배치 후 표시 + 포커스.
 //! - `hide_popup`: 윈도우 숨김. focus 추적 없이 항상 idempotent.
 //! - `toggle_popup`: 이미 보이면 숨기고, 아니면 show_popup.
+//! - `resize_popup`: output 높이 변화에 맞춰 크기 변경 + top-left 보존(메인스레드 동기).
 
 use tauri::{Emitter, LogicalPosition, Manager, Runtime, WebviewWindow};
 
@@ -14,6 +15,16 @@ use crate::events::{POPUP_CLOSED, POPUP_OPENED};
 use objc2::runtime::NSObjectProtocol;
 
 const POPUP_LABEL: &str = "popup";
+
+// resize_popup 높이 sanity 범위(points). FE 가 monitor 80% cap 으로 실제 정책을 강제하지만,
+// IPC 는 신뢰 불가 입력이라 Rust 에서도 backstop 으로 clamp 한다. 상한은 현재 화면 높이의 80%
+// 이고, 화면을 못 구하면(screenless) growth 를 거부해 최소 높이로 제한한다(resize_cap_for_screen).
+const POPUP_MIN_HEIGHT: f64 = 360.0;
+
+// PRD §6.3: popup 높이는 화면(논리 frame)의 80% 를 넘지 않는다. FE computePopupHeight 와 동일한
+// 비율을 cold-show 배치에서도 적용해, 다른 높이의 화면에서 다시 열 때(output 미변경 → FE resize
+// 미발생) cap 을 보장한다.
+const POPUP_MAX_HEIGHT_RATIO: f64 = 0.8;
 
 pub fn get_popup<R: Runtime>(app: &tauri::AppHandle<R>) -> AppResult<WebviewWindow<R>> {
     app.get_webview_window(POPUP_LABEL)
@@ -87,44 +98,51 @@ fn apply_fullscreen_overlay(ns_window: &objc2_app_kit::NSWindow) {
     ns_window.setLevel(NS_STATUS_WINDOW_LEVEL);
 }
 
-/// 커서가 있는 monitor 중심의 popup 좌상단을 `setFrameTopLeftPoint` 용 Cocoa 좌표로
-/// 환산한다. 커서 추출 실패 시 primary 로 fallback하고, monitor API 자체가 실패하면
-/// `None`(호출부가 Tauri 기본 center 로 처리).
+/// 커서가 있는 화면 중앙에 popup 을 둘 좌상단을 `setFrameTopLeftPoint` 용 Cocoa points 로
+/// 구한다.
+///
+/// `NSEvent::mouseLocation` 과 `NSScreen.frame` 은 동일한 전역 Cocoa 공간(좌하단 원점, +y 위)
+/// 이라 모니터별 backing scale 이 계산에 개입하지 않는다. 그래서 Tauri 의 `cursor_position()`
+/// (physical = points × primary_scale) → `monitor_from_point()`(points 기준) 단위 불일치와,
+/// 대상/현재 화면 배율 혼합 문제를 원천에서 제거한다.
+///
+/// 커서가 어느 화면에도 없으면(rare) `screens[0]`(메뉴바·좌표 원점 화면)으로 fallback 한다 —
+/// `mainScreen`(포커스 화면, 가변)이 아니라 결정적인 zero 화면을 쓴다. 화면이 0개면 `None`
+/// (호출부가 Tauri 기본 center 로 처리).
 #[cfg(target_os = "macos")]
-fn cocoa_placement<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<Option<(f64, f64)>> {
-    let active = window
-        .cursor_position()
-        .ok()
-        .and_then(|pos| window.monitor_from_point(pos.x, pos.y).ok().flatten())
-        .or_else(|| window.primary_monitor().ok().flatten());
-    let (Some(monitor), Some(primary)) = (
-        active,
-        window.primary_monitor().map_err(AppError::internal)?,
-    ) else {
-        return Ok(None);
-    };
+fn cocoa_placement(ns_window: &objc2_app_kit::NSWindow) -> Option<(f64, f64)> {
+    use objc2::MainThreadMarker;
+    use objc2_app_kit::{NSEvent, NSScreen};
+    use objc2_foundation::NSSize;
 
-    // monitor 좌표는 physical px. center_on_monitor 로 popup 좌상단(physical)을 구한 뒤
-    // tao 와 동일한 변환으로 Cocoa points 좌표를 만든다.
-    let mon_pos = monitor.position();
-    let mon_size = monitor.size();
-    let outer = window.outer_size().map_err(AppError::internal)?;
-    let (cx, cy) = center_on_monitor(
-        mon_pos.x as f64,
-        mon_pos.y as f64,
-        mon_size.width as f64,
-        mon_size.height as f64,
-        outer.width as f64,
-        outer.height as f64,
-    );
-    let scale = window.scale_factor().map_err(AppError::internal)?;
-    let primary_points_high = primary.size().height as f64 / primary.scale_factor();
-    Ok(Some(physical_top_left_to_cocoa_point(
-        cx,
-        cy,
-        scale,
-        primary_points_high,
-    )))
+    // SAFETY: cold_show 가 run_on_main_thread 로 이 경로의 메인스레드 실행을 보장한다.
+    let mtm = unsafe { MainThreadMarker::new_unchecked() };
+    let frames: Vec<(f64, f64, f64, f64)> = NSScreen::screens(mtm)
+        .iter()
+        .map(|screen| {
+            let f = screen.frame();
+            (f.origin.x, f.origin.y, f.size.width, f.size.height)
+        })
+        .collect();
+    if frames.is_empty() {
+        return None;
+    }
+
+    let cursor = NSEvent::mouseLocation();
+    let idx = screen_index_at(&frames, cursor.x, cursor.y).unwrap_or_else(|| {
+        tracing::debug!("popup placement: cursor not on any screen, using primary");
+        0
+    });
+
+    let (sx, sy, sw, sh) = frames[idx];
+    let size = ns_window.frame().size;
+    // 선택 화면의 80% cap 으로 높이를 제한한 뒤 그 높이로 중앙 배치. 다른 높이의 화면에서 다시
+    // 열 때(output 미변경 → FE resize 미발생) PRD §6.3 80% 제한을 cold-show 가 직접 보장한다.
+    let (capped_h, pos) = capped_centered_placement(sx, sy, sw, sh, size.width, size.height);
+    if capped_h != size.height {
+        ns_window.setContentSize(NSSize::new(size.width, capped_h));
+    }
+    Some(pos)
 }
 
 /// 새로 띄우는 경로(cold-show).
@@ -186,10 +204,10 @@ fn cold_show_on_main<R: Runtime>(window: &WebviewWindow<R>) -> AppResult<()> {
     unsafe { ns_window.setReleasedWhenClosed(false) };
 
     apply_fullscreen_overlay(ns_window);
-    match cocoa_placement(window)? {
+    match cocoa_placement(ns_window) {
         // 위치를 order-front '이전에' 동기 적용 — 듀얼모니터 stale-frame race 제거(기존 회귀 방지).
         Some((x, y)) => ns_window.setFrameTopLeftPoint(NSPoint::new(x, y)),
-        // monitor API 실패 — Tauri 기본 center 로 fallback.
+        // 화면 0개(극단) — Tauri 기본 center 로 fallback.
         None => window.center().map_err(AppError::internal)?,
     }
     // 백그라운드(타 앱이 전면)에서도 전면 배치되는 유일한 호출. makeKeyAndOrderFront 는
@@ -284,6 +302,84 @@ pub async fn toggle_popup<R: Runtime>(app: tauri::AppHandle<R>) -> AppResult<()>
     toggle(&app)
 }
 
+/// output 길이에 따라 popup 높이를 바꾸되 top-left 를 보존한다.
+///
+/// macOS: 크기 변경과 위치 보정을 **메인스레드 한 클로저에서 동기로** 수행한다. FE 에서
+/// `setSize`(tao `set_content_size_async`) → `setPosition`(tao `set_frame_top_left_point_async`)
+/// 으로 나눠 호출하면 둘 다 `DispatchQueue::main().exec_async` 로 enqueue 되어 적용 완료를
+/// JS 가 기다릴 수 없다. 그 사이 닫고 다른 화면에서 다시 열면(`cold_show_on_main`) 늦게 실행된
+/// 이전 세대의 `setContentSize` 가 새 배치를 미는 경합이 생긴다. ns_window 에 직접(동기) 적용해
+/// 이 경합을 제거한다 — `cold_show_on_main` 과 같은 `run_on_main_thread` 경로라 둘 사이도 FIFO 다.
+/// latest-wins(가장 최신 output 높이가 최종 적용)는 FE 가 resize_popup 호출을 single-flight 로
+/// 직렬화해 보장한다(한 번에 하나만 in-flight → enqueue 순서 = 호출 순서 → FIFO 적용). 그래서
+/// Rust 에 seq/generation state 가 필요 없다.
+#[cfg(target_os = "macos")]
+#[tauri::command]
+pub async fn resize_popup<R: Runtime>(app: tauri::AppHandle<R>, height: f64) -> AppResult<()> {
+    let window = get_popup(&app)?;
+    let win = window.clone();
+    window
+        .run_on_main_thread(move || {
+            if let Ok(ptr) = win.ns_window() {
+                use objc2_app_kit::NSWindow;
+                use objc2_foundation::{NSPoint, NSSize};
+                // SAFETY: run_on_main_thread 로 메인스레드 실행 보장 + tao 가 NSWindow 를 살려둔다.
+                let ns_window: &NSWindow = unsafe { &*(ptr as *const NSWindow) };
+                // 신뢰 불가 IPC 입력 — 현재 화면 높이의 80% 를 상한으로 clamp. cold-show·FE 와
+                // 같은 기준(frame * RATIO)이라, 지연된 resize 가 cold-show 80% cap 을 다시 넘지
+                // 못한다. 화면 미연결(screenless)이면 growth 를 거부(최소 높이로 제한).
+                let cap = resize_cap_for_screen(ns_window.screen().map(|s| s.frame().size.height));
+                let height = clamp_popup_height(height, cap);
+                let frame = ns_window.frame();
+                let (tx, ty) =
+                    top_left_to_preserve(frame.origin.x, frame.origin.y, frame.size.height);
+                // setContentSize 는 bottom-left 고정 → 직후 top-left 를 직전 값으로 되돌려 보존.
+                ns_window.setContentSize(NSSize::new(frame.size.width, height));
+                ns_window.setFrameTopLeftPoint(NSPoint::new(tx, ty));
+            }
+        })
+        .map_err(AppError::internal)
+}
+
+/// 비-macOS 컴파일 호환용. width 는 popup 고정값(480), top-left 보존은 macOS 전용 경로에서만.
+/// 상한은 현재 monitor 높이의 80%(없으면 최소 높이).
+#[cfg(not(target_os = "macos"))]
+#[tauri::command]
+pub async fn resize_popup<R: Runtime>(app: tauri::AppHandle<R>, height: f64) -> AppResult<()> {
+    let window = get_popup(&app)?;
+    let screen_h = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .map(|m| m.size().height as f64 / m.scale_factor());
+    let height = clamp_popup_height(height, resize_cap_for_screen(screen_h));
+    window
+        .set_size(tauri::LogicalSize::new(480.0, height))
+        .map_err(AppError::internal)
+}
+
+/// `resize_popup` 가 받은 신뢰 불가 높이를 안전 범위로 clamp 한다. 비유한값(NaN/Inf)은 최소
+/// 높이로 떨어뜨리고, `[POPUP_MIN_HEIGHT, max_height]` 로 가둔다. max < min 인 비정상 화면값도
+/// 최소 높이로 수렴시킨다. 순수 함수라 경계값 회귀를 단위 테스트로 막는다.
+fn clamp_popup_height(height: f64, max_height: f64) -> f64 {
+    if !height.is_finite() {
+        return POPUP_MIN_HEIGHT;
+    }
+    let max = max_height.max(POPUP_MIN_HEIGHT);
+    height.clamp(POPUP_MIN_HEIGHT, max)
+}
+
+/// `resize_popup` 의 높이 상한을 정한다. 화면 높이를 알면 그 80%(`POPUP_MAX_HEIGHT_RATIO`),
+/// 화면을 못 구하면(screenless: 숨김/offscreen) growth 를 거부해 최소 높이로 제한한다 —
+/// 신뢰 불가 IPC 가 큰 height 를 그대로 적용하는 것을 막는다(cold-show 가 표시 시 재적용).
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn resize_cap_for_screen(screen_height: Option<f64>) -> f64 {
+    match screen_height {
+        Some(h) => h * POPUP_MAX_HEIGHT_RATIO,
+        None => POPUP_MIN_HEIGHT,
+    }
+}
+
 /// FE 의 popup 윈도우가 마운트되기 전에 호출해도 안전한 placement helper.
 /// 단위 테스트용 — 화면 크기 모의가 어렵기에 logical-coord 계산을 분리.
 #[allow(dead_code)]
@@ -299,43 +395,59 @@ pub fn center_within(
     )
 }
 
-/// `cocoa_placement` 가 쓰는 좌표 산출 헬퍼. monitor 의 좌상단 좌표 + 크기 →
-/// popup 좌상단(physical px). 순수 함수라 단위 테스트로 배치 회귀를 막는다.
+/// 커서(Cocoa points)를 포함하는 화면 인덱스. 없으면 `None`(호출부 `screens[0]` fallback).
+/// `frames`: `(origin_x, origin_y, width, height)` Cocoa points. 좌/하측 화면의 음수 origin 허용.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn center_on_monitor(
-    mon_x: f64,
-    mon_y: f64,
-    mon_w: f64,
-    mon_h: f64,
+fn screen_index_at(frames: &[(f64, f64, f64, f64)], cursor_x: f64, cursor_y: f64) -> Option<usize> {
+    frames.iter().position(|&(x, y, w, h)| {
+        cursor_x >= x && cursor_x < x + w && cursor_y >= y && cursor_y < y + h
+    })
+}
+
+/// 대상 화면 frame(Cocoa points, 좌하단 원점, +y 위) + popup 크기 → `setFrameTopLeftPoint` 가
+/// 받는 좌상단(Cocoa points). +y 가 위쪽이라 좌상단 y = 화면 하단 + (화면 높이 + popup 높이)/2.
+///
+/// 배율 인자가 없는 게 핵심이다. `NSScreen.frame`·`NSWindow.frame` 이 같은 points 공간이라
+/// 모니터별 backing scale 이 결과에 영향을 주지 않는다 — 기존 physical 왕복(H1/H2)이 일으킨
+/// 단위 불일치·배율 혼합을 제거한다.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn center_top_left_in_cocoa_points(
+    screen_x: f64,
+    screen_y: f64,
+    screen_w: f64,
+    screen_h: f64,
     popup_w: f64,
     popup_h: f64,
 ) -> (f64, f64) {
-    let x = mon_x + (mon_w - popup_w) / 2.0;
-    let y = mon_y + (mon_h - popup_h) / 2.0;
-    (x, y)
+    let x = screen_x + (screen_w - popup_w) / 2.0;
+    let top_y = screen_y + (screen_h + popup_h) / 2.0;
+    (x, top_y)
 }
 
-/// `center_on_monitor` 가 구한 physical top-left 좌표(popup 좌상단)를
-/// `NSWindow::setFrameTopLeftPoint` 가 받는 Cocoa 좌표(points, 원점은 primary 좌하단,
-/// +y 위쪽)로 변환한다.
-///
-/// tao 의 `set_outer_position` 은 비동기(`exec_async`)라 동기 `show()`
-/// (`make_key_and_order_front_sync` → 메인스레드 inline)와 실행 순서가 뒤집힌다.
-/// cold-show 시 order-front 시점의 프레임이 stale 이라 듀얼모니터+전체화면에서 popup 이
-/// 엉뚱한 Space 에 떠 안 보인다. 이를 피하려 위치를 ns_window 에 **동기**로 적용하는데,
-/// 그때 tao 의 `window_position` 변환을 그대로 재현해 기존 배치 결과를 보존한다:
-///   logical = physical / scale
-///   cocoa_top_left = (logical.x, primary_points_high - logical.y)
-/// `primary_points_high` 는 primary monitor 의 points 높이로, tao 가 쓰는
-/// `CGDisplay::main().pixels_high()` 와 같다(= primary `size.height / scale_factor`).
+/// 선택 화면의 80% cap(`POPUP_MAX_HEIGHT_RATIO`)으로 popup 높이를 제한하고, 그 높이로 중앙
+/// 좌상단을 구한다. 반환: `(capped_height, (top_left_x, top_left_y))`. 호출부가 capped_height 로
+/// `setContentSize` 후 좌상단을 적용한다. 순수 함수라 reopen-on-shorter-screen 회귀를 막는다.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-fn physical_top_left_to_cocoa_point(
-    phys_x: f64,
-    phys_y: f64,
-    scale: f64,
-    primary_points_high: f64,
-) -> (f64, f64) {
-    (phys_x / scale, primary_points_high - phys_y / scale)
+fn capped_centered_placement(
+    screen_x: f64,
+    screen_y: f64,
+    screen_w: f64,
+    screen_h: f64,
+    popup_w: f64,
+    popup_h: f64,
+) -> (f64, (f64, f64)) {
+    let capped_h = clamp_popup_height(popup_h, screen_h * POPUP_MAX_HEIGHT_RATIO);
+    let pos =
+        center_top_left_in_cocoa_points(screen_x, screen_y, screen_w, screen_h, popup_w, capped_h);
+    (capped_h, pos)
+}
+
+/// `setContentSize` 는 Cocoa bottom-left 를 고정하므로 height 가 바뀌면 창이 위로 자란다. 직전
+/// 좌상단(`origin + 현재 높이`)을 돌려줘, 리사이즈 직후 `setFrameTopLeftPoint` 로 위치를 보존한다
+/// (드래그한 위치 또는 cold-show 중앙을 그대로 유지). 순수 함수라 회귀를 단위 테스트로 막는다.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+fn top_left_to_preserve(origin_x: f64, origin_y: f64, frame_height: f64) -> (f64, f64) {
+    (origin_x, origin_y + frame_height)
 }
 
 #[cfg(test)]
@@ -356,53 +468,154 @@ mod tests {
         assert_eq!(pos.y, 0.0);
     }
 
-    /// Major 4 — secondary monitor 의 origin offset 이 반영돼야 한다.
+    /// primary(zero) 화면 중앙 → Cocoa 좌상단. x 는 가로 중앙, top_y 는 하단+(높이+popup)/2.
     #[test]
-    fn center_on_monitor_respects_origin_offset() {
-        // 1440x900 primary 우측에 1920x1080 sub-monitor 가 붙은 케이스.
-        let (x, y) = center_on_monitor(1440.0, 0.0, 1920.0, 1080.0, 480.0, 360.0);
-        assert_eq!(x, 1440.0 + (1920.0 - 480.0) / 2.0);
-        assert_eq!(y, (1080.0 - 360.0) / 2.0);
+    fn cocoa_center_on_primary() {
+        // 1440x900 primary, popup 480x360.
+        // x = (1440-480)/2 = 480. top_y = (900+360)/2 = 630.
+        assert_eq!(
+            center_top_left_in_cocoa_points(0.0, 0.0, 1440.0, 900.0, 480.0, 360.0),
+            (480.0, 630.0)
+        );
     }
 
-    /// 비-Retina(scale 1): primary 중앙 배치 → Cocoa 좌상단은 X 동일, Y 만 뒤집힘.
+    /// 우측 secondary: 양수 origin x 가 좌상단 x 에 보존된다.
     #[test]
-    fn cocoa_point_flips_y_on_non_retina_primary() {
-        // 1920x1080 primary, popup 480x360 중앙 → physical top-left (720, 360).
-        let (px, py) = center_on_monitor(0.0, 0.0, 1920.0, 1080.0, 480.0, 360.0);
-        assert_eq!((px, py), (720.0, 360.0));
-        // scale 1, primary 1080pt → Cocoa 좌상단 (720, 1080 - 360) = (720, 720).
-        let (cx, cy) = physical_top_left_to_cocoa_point(px, py, 1.0, 1080.0);
-        assert_eq!((cx, cy), (720.0, 720.0));
+    fn cocoa_center_preserves_right_secondary_origin() {
+        // secondary origin x=1440, 1920x1080. x = 1440 + (1920-480)/2 = 2160.
+        assert_eq!(
+            center_top_left_in_cocoa_points(1440.0, 0.0, 1920.0, 1080.0, 480.0, 360.0),
+            (2160.0, 720.0)
+        );
     }
 
-    /// Retina(scale 2): physical 좌표는 logical 로 나눈 뒤 primary points 높이로 뒤집힌다.
+    /// 좌측 secondary: 음수 origin x 가 보존된다.
     #[test]
-    fn cocoa_point_divides_by_scale_on_retina() {
-        // 1440x900 logical = 2880x1800 physical primary. popup 480x360 logical
-        // (= outer 960x720 physical) 중앙 → physical top-left (960, 540).
-        let (px, py) = center_on_monitor(0.0, 0.0, 2880.0, 1800.0, 960.0, 720.0);
-        assert_eq!((px, py), (960.0, 540.0));
-        // scale 2, primary 900pt → (960/2, 900 - 540/2) = (480, 630).
-        let (cx, cy) = physical_top_left_to_cocoa_point(px, py, 2.0, 900.0);
-        assert_eq!((cx, cy), (480.0, 630.0));
+    fn cocoa_center_preserves_negative_origin_left_secondary() {
+        // secondary origin x=-1920, 1920x1080. x = -1920 + (1920-480)/2 = -1200.
+        assert_eq!(
+            center_top_left_in_cocoa_points(-1920.0, 0.0, 1920.0, 1080.0, 480.0, 360.0),
+            (-1200.0, 720.0)
+        );
     }
 
-    /// 멀티모니터: secondary 가 primary 우측이면 X 는 보존되고 Y 는 primary 높이 기준.
+    /// 아래쪽 secondary: zero 화면보다 낮은 화면은 음수 origin y → top_y 도 음수일 수 있다.
     #[test]
-    fn cocoa_point_preserves_x_on_right_secondary() {
-        // primary 1920x1080 우측에 1920x1080 secondary(origin x=1920). popup 480x360 중앙.
-        let (px, py) = center_on_monitor(1920.0, 0.0, 1920.0, 1080.0, 480.0, 360.0);
-        assert_eq!((px, py), (2640.0, 360.0));
-        let (cx, cy) = physical_top_left_to_cocoa_point(px, py, 1.0, 1080.0);
-        // X 는 그대로(primary 우측), Y 는 primary 높이 기준 뒤집기.
-        assert_eq!((cx, cy), (2640.0, 720.0));
+    fn cocoa_center_preserves_vertical_origin() {
+        // secondary origin y=-1080, 1920x1080. top_y = -1080 + (1080+360)/2 = -360.
+        assert_eq!(
+            center_top_left_in_cocoa_points(0.0, -1080.0, 1920.0, 1080.0, 480.0, 360.0),
+            (720.0, -360.0)
+        );
     }
 
-    /// 멀티모니터: secondary 가 primary 좌측이면 음수 X offset 이 보존된다.
+    /// 회귀 guard: 배율 인자가 없으므로 같은 points frame 은 (어느 backing scale 이든) 같은 결과.
+    /// 누군가 다시 physical/scale 왕복을 넣으면 이 기대값이 깨진다.
     #[test]
-    fn cocoa_point_preserves_negative_x_on_left_secondary() {
-        let (cx, cy) = physical_top_left_to_cocoa_point(-1200.0, 200.0, 1.0, 1080.0);
-        assert_eq!((cx, cy), (-1200.0, 880.0));
+    fn cocoa_center_takes_no_scale_factor() {
+        // Retina(2x)로 2880x1800 physical 인 화면도 points 로는 1440x900 → 아래로 고정.
+        assert_eq!(
+            center_top_left_in_cocoa_points(0.0, 0.0, 1440.0, 900.0, 480.0, 360.0),
+            (480.0, 630.0)
+        );
+    }
+
+    /// 커서가 든 화면 인덱스를 반환한다(다중 화면).
+    #[test]
+    fn screen_index_at_finds_containing_screen() {
+        let frames = [(0.0, 0.0, 1440.0, 900.0), (1440.0, 0.0, 1920.0, 1080.0)];
+        assert_eq!(screen_index_at(&frames, 200.0, 200.0), Some(0));
+        assert_eq!(screen_index_at(&frames, 2000.0, 500.0), Some(1));
+    }
+
+    /// 음수 origin 화면(좌측 배치) 안의 커서도 매칭한다.
+    #[test]
+    fn screen_index_at_matches_negative_origin_screen() {
+        let frames = [(0.0, 0.0, 1440.0, 900.0), (-1920.0, 0.0, 1920.0, 1080.0)];
+        assert_eq!(screen_index_at(&frames, -1000.0, 300.0), Some(1));
+    }
+
+    /// 어느 화면에도 없으면 None(호출부 screens[0] fallback).
+    #[test]
+    fn screen_index_at_returns_none_when_outside() {
+        let frames = [(0.0, 0.0, 1440.0, 900.0)];
+        assert_eq!(screen_index_at(&frames, 5000.0, 5000.0), None);
+    }
+
+    /// resize 시 직전 top-left(= origin + 현재 높이)를 보존한다. height 가 바뀌어도 top 고정.
+    #[test]
+    fn top_left_to_preserve_keeps_top_edge() {
+        // origin (100, 200), 현재 높이 360 → top-left (100, 560).
+        assert_eq!(top_left_to_preserve(100.0, 200.0, 360.0), (100.0, 560.0));
+        // 음수 origin(좌/하측 화면)도 그대로 반영.
+        assert_eq!(
+            top_left_to_preserve(-1200.0, -50.0, 480.0),
+            (-1200.0, 430.0)
+        );
+    }
+
+    /// 신뢰 불가 높이 입력을 안전 범위로 clamp 한다(IPC 경계 검증).
+    #[test]
+    fn clamp_popup_height_bounds_untrusted_input() {
+        let max = 1080.0;
+        // 정상값은 그대로.
+        assert_eq!(clamp_popup_height(600.0, max), 600.0);
+        // 음수·0·최소 미만은 최소로.
+        assert_eq!(clamp_popup_height(-1.0, max), POPUP_MIN_HEIGHT);
+        assert_eq!(clamp_popup_height(0.0, max), POPUP_MIN_HEIGHT);
+        assert_eq!(clamp_popup_height(100.0, max), POPUP_MIN_HEIGHT);
+        // 매우 큰 유한값은 max 로.
+        assert_eq!(clamp_popup_height(1e18, max), max);
+        // 비유한값(NaN/Inf)은 최소로.
+        assert_eq!(clamp_popup_height(f64::NAN, max), POPUP_MIN_HEIGHT);
+        assert_eq!(clamp_popup_height(f64::INFINITY, max), POPUP_MIN_HEIGHT);
+        // 경계 안.
+        assert_eq!(clamp_popup_height(360.0, max), 360.0);
+        assert_eq!(clamp_popup_height(1080.0, max), 1080.0);
+        // 비정상 화면값(max < min)도 최소로 수렴.
+        assert_eq!(clamp_popup_height(500.0, 100.0), POPUP_MIN_HEIGHT);
+    }
+
+    /// cold-show 재배치: 다른 높이의 화면에서 다시 열 때 80% cap 을 재적용하고 그 높이로 중앙배치.
+    #[test]
+    fn capped_centered_placement_reapplies_screen_cap() {
+        // 작은 화면(1440x900, 80%=720)에서, 직전에 큰 화면에서 커진 popup(높이 1000) 을 다시 연다.
+        let (h, (x, y)) = capped_centered_placement(0.0, 0.0, 1440.0, 900.0, 480.0, 1000.0);
+        assert_eq!(h, 720.0); // 900 * 0.8 으로 clamp
+                              // capped 높이 기준 중앙: x=(1440-480)/2=480, top_y=(900+720)/2=810.
+        assert_eq!((x, y), (480.0, 810.0));
+
+        // cap 안의 높이는 그대로, 그 높이로 중앙.
+        let (h2, pos2) = capped_centered_placement(0.0, 0.0, 1920.0, 1080.0, 480.0, 500.0);
+        assert_eq!(h2, 500.0);
+        assert_eq!(pos2, (720.0, 790.0)); // x=(1920-480)/2=720, top_y=(1080+500)/2=790
+    }
+
+    /// resize_popup 상한도 화면의 80% — 큰 화면 target 을 작은 화면에서 적용하면 80% 로 제한된다
+    /// (cold-show cap 우회 방지). resize_popup 가 쓰는 `screen.frame * RATIO` 를 max 로 검증.
+    #[test]
+    fn resize_popup_max_is_screen_80_percent() {
+        // 큰 화면(2160 높이)에서 계산된 target(1700)을, 작은 화면(900 높이, 80%=720)에서 적용.
+        let small_max = 900.0 * POPUP_MAX_HEIGHT_RATIO;
+        assert_eq!(clamp_popup_height(1700.0, small_max), 720.0);
+        // 작은 화면 80% 안의 값은 그대로.
+        assert_eq!(clamp_popup_height(600.0, small_max), 600.0);
+    }
+
+    /// resize_popup 상한: 화면 높이를 알면 80%, screenless 면 최소 높이로 growth 거부.
+    #[test]
+    fn resize_cap_for_screen_bounds_screenless_fallback() {
+        // 화면 있음 → 80% cap. 신뢰 불가 큰 height 도 이 cap 으로 제한된다.
+        assert_eq!(resize_cap_for_screen(Some(900.0)), 720.0);
+        assert_eq!(
+            clamp_popup_height(4000.0, resize_cap_for_screen(Some(900.0))),
+            720.0
+        );
+        // screenless(None) → 최소 높이 cap. 4000 같은 값도 360 으로 제한(이전 fallback 4000 우회 차단).
+        assert_eq!(resize_cap_for_screen(None), POPUP_MIN_HEIGHT);
+        assert_eq!(
+            clamp_popup_height(4000.0, resize_cap_for_screen(None)),
+            POPUP_MIN_HEIGHT
+        );
     }
 }

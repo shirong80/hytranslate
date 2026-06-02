@@ -47,7 +47,8 @@ csv = "1"
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 # NSPanel = popup swizzle 대상, NSWindow = level/behavior/styleMask, NSResponder = 상위 클래스.
-objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder", "NSPanel"] }
+# NSScreen/NSEvent = popup 을 커서 화면 중앙에 배치(mouseLocation + screen frame, Cocoa points).
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSWindow", "NSResponder", "NSPanel", "NSScreen", "NSEvent"] }
 # NSPoint(= CGPoint). NSPanel feature 가 objc2-foundation 의 NSCoder/NSObject 를 자동으로 켠다.
 objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry", "objc2-core-foundation"] }
 

@@ -161,6 +161,7 @@ pub fn register<R: Runtime>(builder: Builder<R>) -> Builder<R> {
             popup::show_popup,
             popup::hide_popup,
             popup::toggle_popup,
+            popup::resize_popup,
             history::list_translation_records,
             history::search_translation_records,
             history::get_translation_record,

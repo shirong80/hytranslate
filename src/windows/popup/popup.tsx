@@ -1,9 +1,10 @@
-import { currentMonitor, getCurrentWindow, LogicalSize } from '@tauri-apps/api/window';
+import { currentMonitor } from '@tauri-apps/api/window';
 import { Check, ClipboardPaste, Copy, Loader2, X } from 'lucide-react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 
 import { usePasteFromClipboard } from '@features/clipboard/hooks';
+import { hidePopup, resizePopup } from '@features/popup/ipc';
 import { useSettingsStore } from '@features/settings/store';
 import { SourceLanguageSelect } from '@features/translation/components/source-language-select';
 import { useTranslationStore } from '@features/translation/store';
@@ -12,10 +13,12 @@ import { useTranslationController } from '@features/translation/use-translation-
 import { t } from '@i18n/ko';
 import { copyText } from '@lib/clipboard';
 import { useAutoCopyTranslation } from '@lib/hooks/use-auto-copy-translation';
-import { invoke, listen } from '@lib/ipc/client';
+import { listen } from '@lib/ipc/client';
 import { messageFor } from '@lib/ipc/errors';
 import { POPUP_OPENED } from '@lib/ipc/events';
 import { applyTheme, type ThemeMode } from '@lib/theme';
+
+import { createPopupResizer } from './resize';
 
 import '@styles/globals.css';
 
@@ -43,6 +46,29 @@ function PopupApp() {
   const [copied, setCopied] = useState(false);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  // resize_popup 호출을 single-flight 로 직렬화해 늦게 끝난 resize 가 최신 높이를 덮지 않게 한다.
+  const enqueueResize = useMemo(() => createPopupResizer(), []);
+
+  // 현재 화면 기준으로 output 높이를 다시 계산해 resize_popup 으로 적용한다. output 변경(streaming)
+  // 과 재오픈(POPUP_OPENED) 양쪽에서 쓴다 — 재오픈 시 다른(특히 더 큰) 화면이면 긴 결과에 맞는
+  // 높이를 복구한다. 안정 콜백이라 listener/effect 가 stale 을 잡지 않는다(길이는 인자로 전달).
+  const applyResize = useCallback(
+    async (outputLength: number, isCancelled: () => boolean) => {
+      try {
+        const monitor = await currentMonitor();
+        if (isCancelled() || !monitor) return;
+        await enqueueResize(
+          outputLength,
+          monitor.size.height / monitor.scaleFactor,
+          (height) => resizePopup(height),
+          isCancelled,
+        );
+      } catch {
+        // Tauri 외 환경에서 silent.
+      }
+    },
+    [enqueueResize],
+  );
 
   useEffect(() => {
     // 글로벌 단축키로 윈도우가 열릴 때 자동 포커스. autoFocus prop 대신 ref 로
@@ -50,12 +76,14 @@ function PopupApp() {
     textareaRef.current?.focus();
   }, []);
 
-  // Major 4 — 단축키로 다시 열릴 때마다 textarea focus 보장.
+  // Major 4 — 단축키로 다시 열릴 때마다 textarea focus 보장 + 현재 화면 기준 높이 복구(P2-1).
   useEffect(() => {
     let off: (() => void) | undefined;
     let cancelled = false;
     listen<void>(POPUP_OPENED, () => {
       textareaRef.current?.focus();
+      // 재오픈 시 output 은 store 에서 직접 읽는다(listener closure stale 회피). 단발이라 coalesce 불필요.
+      void applyResize(useTranslationStore.getState().output.length, () => cancelled);
     }).then((unsub) => {
       if (cancelled) unsub();
       else off = unsub;
@@ -64,7 +92,7 @@ function PopupApp() {
       cancelled = true;
       off?.();
     };
-  }, []);
+  }, [applyResize]);
 
   const pasteFromClipboard = usePasteFromClipboard({
     onText: (text) => setSourceText(text),
@@ -82,37 +110,16 @@ function PopupApp() {
   }, [pasteError]);
 
   // Major 4 — output 길이에 따라 popup 높이 조정. monitor 의 80% 를 cap.
-  // 480x360 이 기본; output 이 비면 360 으로 복귀.
+  // 480x360 이 기본; output 이 비면 360 으로 복귀. 크기 변경 + top-left 보존은 Rust
+  // `resize_popup` 가 메인스레드에서 동기로 처리한다(close→reopen stale resize 경합 제거).
   useEffect(() => {
     if (typeof window === 'undefined') return;
     let cancelled = false;
-    const adjust = async () => {
-      try {
-        const monitor = await currentMonitor();
-        if (cancelled || !monitor) return;
-        const scale = monitor.scaleFactor;
-        const maxH = (monitor.size.height / scale) * 0.8;
-        const charsPerLine = 64;
-        const lineHeight = 18;
-        const lines = output ? Math.ceil(output.length / charsPerLine) : 0;
-        const base = 240;
-        const desired = base + Math.max(0, lines) * lineHeight;
-        const target = Math.min(Math.max(desired, 360), maxH);
-        // tao 의 setSize 는 Cocoa bottom-left 를 고정해 output 이 늘면 창이 위로 자란다
-        // → 드래그로 옮긴 위치가 흔들린다. 리사이즈 전 top-left 를 잡아 뒤에 복원해 고정.
-        const win = getCurrentWindow();
-        const topLeft = await win.outerPosition();
-        await win.setSize(new LogicalSize(480, target));
-        if (!cancelled) await win.setPosition(topLeft);
-      } catch {
-        // Tauri 외 환경에서 silent.
-      }
-    };
-    void adjust();
+    void applyResize(output.length, () => cancelled);
     return () => {
       cancelled = true;
     };
-  }, [output]);
+  }, [output, applyResize]);
 
   useEffect(() => {
     void load();
@@ -127,7 +134,7 @@ function PopupApp() {
   }, [loaded, activeModel, setModel]);
 
   const handleClose = useCallback(() => {
-    invoke<void>('hide_popup').catch(() => undefined);
+    hidePopup().catch(() => undefined);
   }, []);
 
   const setCopyError = useTranslationStore((s) => s.setCopyError);

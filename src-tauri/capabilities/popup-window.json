@@ -1,12 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "popup-window",
-  "description": "popup 윈도우만 자기 창을 드래그(헤더)·리사이즈·재배치하도록 허용. 헤더 data-tauri-drag-region 은 start_dragging 을, output 높이 자동 조정과 드래그 위치 top-left 재고정은 set-size/set-position 을 호출한다. main/menubar 는 이 권한이 필요 없어 windows 를 popup 으로 한정(최소 권한, clipboard-read 와 동일한 윈도우별 분리 컨벤션).",
+  "description": "popup 윈도우만 자기 창 헤더(data-tauri-drag-region)를 드래그하도록 허용. 크기 변경과 top-left 재고정은 전용 app command resize_popup(Rust)이 처리하므로 generic window setter 권한은 두지 않는다. set-size/set-position 은 호출자가 label 로 다른 윈도우(main/menubar)를 지목할 수 있어(plugin window get_window) 최소 권한에서 제외한다.",
   "platforms": ["macOS"],
   "windows": ["popup"],
-  "permissions": [
-    "core:window:allow-start-dragging",
-    "core:window:allow-set-size",
-    "core:window:allow-set-position"
-  ]
+  "permissions": ["core:window:allow-start-dragging"]
 }
